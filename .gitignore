@@ -7,3 +7,7 @@ outputs/
 .pytest_cache/
 .ruff_cache/
 *.egg-info/
+# pyproject.toml declares no [project.dependencies], so `uv run` treats this
+# as a zero-dependency project and writes a trivial, misleading lockfile.
+# Real reproducibility artifact is requirements-lock.txt (uv pip freeze).
+uv.lock
