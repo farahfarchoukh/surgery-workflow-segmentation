@@ -87,6 +87,8 @@ def compute_batch_logits(model: PhaseSegmentationModel, cases: list[SyntheticCas
     groups (bounded, so memory use doesn't grow unboundedly with dataset
     size) and runs each chunk through the model in one call. Returns
     [len(cases), seq_len, num_classes]."""
+    if not cases:
+        return np.empty((0,), dtype=np.float32)
     all_logits = []
     with torch.no_grad():
         for start in range(0, len(cases), batch_size):
