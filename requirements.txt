@@ -1,0 +1,14 @@
+# CPU-only build: this dev environment has no GPU, and the prototype is designed to be
+# CPU-trainable in seconds on synthetic data (see report Sec 4.2.2 for the FPS/scale rationale).
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.4
+
+numpy>=1.26
+pyyaml>=6.0
+pytest>=8.0
+
+# Pure-Python report tooling: no pandoc/node/graphviz available in this environment,
+# so PDF generation and diagramming both use pip-only, no-system-binary libraries.
+markdown>=3.6
+xhtml2pdf>=0.2.16
+matplotlib>=3.9
