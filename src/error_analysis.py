@@ -52,7 +52,7 @@ import torch
 
 from src.config import PHASE_LABELS, ExperimentConfig, build_allowed_transition_matrix, set_seed
 from src.data import SurgeryPhaseDataset, SyntheticCase, generate_class_prototypes
-from src.evaluate import load_model
+from src.evaluate import compute_batch_logits, load_model
 from src.metrics import frame_accuracy_by_class, segmental_f1_by_class, segment_count_by_class
 from src.postprocess import frames_to_segments, generate_timeline
 
@@ -114,10 +114,12 @@ def inject_background_jitter(
     )
 
 
-def analyze_case(model, case: SyntheticCase, cfg: ExperimentConfig, allowed: np.ndarray) -> dict:
-    with torch.no_grad():
-        logits = model(case.features.unsqueeze(0), case.camera_mask.unsqueeze(0))[-1][0]
-    logits_np = logits.numpy()
+def analyze_case_from_logits(logits_np: np.ndarray, case: SyntheticCase, cfg: ExperimentConfig, allowed: np.ndarray) -> dict:
+    """Takes an already-computed logits array rather than running the model
+    itself, so the (expensive, batchable) forward pass can be computed once
+    for every clean/noisy case together - see evaluate.py's module
+    docstring for why batching, not per-case threading, is the mechanism
+    that actually helps here."""
     gt_frames = case.labels.numpy()
     gt_segments = frames_to_segments(gt_frames)
 
@@ -196,14 +198,24 @@ def run_error_analysis(cfg: ExperimentConfig, checkpoint_path: Path) -> dict:
     prototypes = generate_class_prototypes(cfg.data.feature_dim, cfg.data.seed)
     rng = np.random.default_rng(cfg.data.seed + 999)
 
-    clean_results, noisy_results = [], []
-    for i in range(len(val_ds)):
-        clean_case = val_ds[i]
+    clean_cases = [val_ds[i] for i in range(len(val_ds))]
+    noisy_cases = []
+    for clean_case in clean_cases:
         noisy_case = inject_occlusion_noise(clean_case, cfg.data.feature_dim, rng)
         noisy_case = inject_background_jitter(noisy_case, prototypes, rng)
+        noisy_cases.append(noisy_case)
 
-        clean_results.append(analyze_case(model, clean_case, cfg, allowed))
-        noisy_results.append(analyze_case(model, noisy_case, cfg, allowed))
+    # One batched forward pass for all clean cases, one for all noisy cases,
+    # instead of 2 * len(val_ds) individual calls.
+    clean_logits = compute_batch_logits(model, clean_cases)
+    noisy_logits = compute_batch_logits(model, noisy_cases)
+
+    clean_results = [
+        analyze_case_from_logits(logits, case, cfg, allowed) for logits, case in zip(clean_logits, clean_cases)
+    ]
+    noisy_results = [
+        analyze_case_from_logits(logits, case, cfg, allowed) for logits, case in zip(noisy_logits, noisy_cases)
+    ]
 
     clean_breakdown = aggregate_class_breakdown(clean_results)
     noisy_breakdown = aggregate_class_breakdown(noisy_results)

@@ -6,6 +6,17 @@ argmax predictions, once on the postprocess.generate_timeline() output -
 and reports both. This makes postprocessing's value-add a measured number,
 not an assumed one: the report can cite "edit score improved from X to Y"
 instead of asserting smoothing helps.
+
+Batched, not per-case, model inference. An earlier version ran one
+forward pass per case in a loop; measuring it (not assuming) showed that's
+the wrong lever at this model's size - thread-level parallelism across
+cases was actually 25-45% SLOWER (thread-pool overhead and reduced
+intra-op parallelism dominate for a model this small), while batching
+every case into ONE forward pass measured 1.1x-7.9x faster. That's not a
+coincidence: it's the same mechanism Sec 4.3.2's Triton dynamic-batching
+cost lever describes for production, just exercised locally. Postprocessing
+and metrics stay per-case (they're cheap, sequential Python logic - the
+model forward pass is what's worth batching).
 """
 
 from __future__ import annotations
@@ -18,10 +29,20 @@ import numpy as np
 import torch
 
 from src.config import NUM_CLASSES, PHASE_LABELS, ExperimentConfig, ModelConfig, build_allowed_transition_matrix, set_seed
-from src.data import SurgeryPhaseDataset
+from src.data import SurgeryPhaseDataset, SyntheticCase, collate_cases
 from src.metrics import MetricsReport, compute_all_metrics
 from src.model import PhaseSegmentationModel
 from src.postprocess import frames_to_segments, generate_timeline, segments_to_frames
+
+
+class CorruptedCheckpointError(RuntimeError):
+    """Raised when a checkpoint file exists but can't be loaded as a valid
+    model - truncated/corrupted file, wrong format, or an architecture that
+    doesn't match its own recorded metadata. Wraps whatever low-level
+    exception torch raised (a pickle error, a missing dict key, a
+    state_dict shape mismatch) with one consistent, actionable message,
+    rather than surfacing a different raw traceback shape for each failure
+    mode to whoever is running evaluate.py/error_analysis.py."""
 
 
 def load_model(cfg: ExperimentConfig, checkpoint_path: Path) -> PhaseSegmentationModel:
@@ -30,29 +51,59 @@ def load_model(cfg: ExperimentConfig, checkpoint_path: Path) -> PhaseSegmentatio
             f"No checkpoint at {checkpoint_path}. Train one first: "
             f"`make train` or `python -m src.train --output {checkpoint_path}`."
         )
-    # weights_only=True (the safe default since PyTorch 2.6): the checkpoint
-    # was saved as tensors + plain dict/str/int, no pickled custom classes
-    # (see train.train's checkpoint-writing comment), so nothing here needs
-    # to unpickle arbitrary code.
-    ckpt = torch.load(checkpoint_path, weights_only=True)
+    try:
+        # weights_only=True (the safe default since PyTorch 2.6): the
+        # checkpoint was saved as tensors + plain dict/str/int, no pickled
+        # custom classes (see train.train's checkpoint-writing comment), so
+        # nothing here needs to unpickle arbitrary code.
+        ckpt = torch.load(checkpoint_path, weights_only=True)
 
-    # ckpt["model_config"] takes precedence over cfg.model: the checkpoint is
-    # self-describing about the ARCHITECTURE it was actually trained with, so
-    # loading it against a caller-supplied cfg.model that has since drifted
-    # (e.g. someone edited config/default.yaml after training) fails loudly
-    # via a state_dict shape mismatch instead of silently loading garbage.
-    model_cfg = ModelConfig(**ckpt["model_config"]) if "model_config" in ckpt else cfg.model
-    model = PhaseSegmentationModel(model_cfg, ckpt.get("feature_dim", cfg.data.feature_dim), ckpt.get("num_classes", NUM_CLASSES))
-    model.load_state_dict(ckpt["model_state"])
+        # ckpt["model_config"] takes precedence over cfg.model: the
+        # checkpoint is self-describing about the ARCHITECTURE it was
+        # actually trained with, so loading it against a caller-supplied
+        # cfg.model that has since drifted (e.g. someone edited
+        # config/default.yaml after training) fails loudly via a
+        # state_dict shape mismatch instead of silently loading garbage.
+        model_cfg = ModelConfig(**ckpt["model_config"]) if "model_config" in ckpt else cfg.model
+        model = PhaseSegmentationModel(
+            model_cfg, ckpt.get("feature_dim", cfg.data.feature_dim), ckpt.get("num_classes", NUM_CLASSES)
+        )
+        model.load_state_dict(ckpt["model_state"])
+    except FileNotFoundError:
+        raise
+    except Exception as e:
+        raise CorruptedCheckpointError(
+            f"Could not load checkpoint at {checkpoint_path}: {type(e).__name__}: {e}. "
+            f"The file exists but isn't a valid checkpoint for this model - it may be "
+            f"truncated, corrupted, or written by an incompatible version. Retrain with "
+            f"`make train` to produce a fresh one."
+        ) from e
     model.eval()
     return model
 
 
-def evaluate_case(model, case, cfg: ExperimentConfig, allowed: np.ndarray) -> tuple[MetricsReport, MetricsReport]:
-    """Returns (raw_report, postprocessed_report) for one synthetic case."""
+def compute_batch_logits(model: PhaseSegmentationModel, cases: list[SyntheticCase], batch_size: int = 32) -> np.ndarray:
+    """The batched forward pass: chunks `cases` into `batch_size`-sized
+    groups (bounded, so memory use doesn't grow unboundedly with dataset
+    size) and runs each chunk through the model in one call. Returns
+    [len(cases), seq_len, num_classes]."""
+    all_logits = []
     with torch.no_grad():
-        logits = model(case.features.unsqueeze(0), case.camera_mask.unsqueeze(0))[-1][0]  # [T, C]
-    logits_np = logits.numpy()
+        for start in range(0, len(cases), batch_size):
+            chunk = cases[start : start + batch_size]
+            batch = collate_cases(chunk)
+            logits = model(batch["features"], batch["camera_mask"])[-1]  # [b, T, C]
+            all_logits.append(logits.numpy())
+    return np.concatenate(all_logits, axis=0)
+
+
+def evaluate_case_from_logits(
+    logits_np: np.ndarray, case: SyntheticCase, cfg: ExperimentConfig, allowed: np.ndarray
+) -> tuple[MetricsReport, MetricsReport]:
+    """Same computation as the old evaluate_case, but takes an already-
+    computed logits array instead of running the model itself - lets the
+    (expensive, batchable) forward pass and the (cheap, inherently
+    per-case) postprocessing/metrics stay separate."""
     gt_frames = case.labels.numpy()
     gt_segments = frames_to_segments(gt_frames)
 
@@ -68,6 +119,15 @@ def evaluate_case(model, case, cfg: ExperimentConfig, allowed: np.ndarray) -> tu
         post_pred_frames, gt_frames, post_segments, gt_segments, cfg.eval, cfg.data.seconds_per_frame
     )
     return raw_report, post_report
+
+
+def evaluate_case(model, case: SyntheticCase, cfg: ExperimentConfig, allowed: np.ndarray) -> tuple[MetricsReport, MetricsReport]:
+    """Single-case convenience wrapper (used by callers that only have one
+    case at hand, e.g. an interactive check) - internally just a batch of
+    one. Prefer compute_batch_logits + evaluate_case_from_logits directly
+    when processing many cases, which is what run_evaluation does."""
+    logits_np = compute_batch_logits(model, [case])[0]
+    return evaluate_case_from_logits(logits_np, case, cfg, allowed)
 
 
 def aggregate(reports: list[MetricsReport]) -> dict:
@@ -128,9 +188,12 @@ def run_evaluation(cfg: ExperimentConfig, checkpoint_path: Path) -> dict:
     val_ds = SurgeryPhaseDataset(cfg.data, cfg.data.num_val_sequences, base_seed=cfg.data.seed + 1)
     allowed = build_allowed_transition_matrix()
 
+    cases = [val_ds[i] for i in range(len(val_ds))]
+    batch_logits = compute_batch_logits(model, cases)
+
     raw_reports, post_reports = [], []
-    for i in range(len(val_ds)):
-        raw_report, post_report = evaluate_case(model, val_ds[i], cfg, allowed)
+    for logits_np, case in zip(batch_logits, cases):
+        raw_report, post_report = evaluate_case_from_logits(logits_np, case, cfg, allowed)
         raw_reports.append(raw_report)
         post_reports.append(post_report)
 

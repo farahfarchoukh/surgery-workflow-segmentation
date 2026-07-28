@@ -21,6 +21,21 @@ from src.data import SurgeryPhaseDataset, collate_cases
 from src.model import PhaseSegmentationModel, compute_loss, count_params
 
 
+class TrainingDivergedError(RuntimeError):
+    """Raised when a training step produces a non-finite (NaN/Inf) loss.
+
+    Fail LOUDLY and stop immediately rather than silently continuing:
+    a diverged run would otherwise still write a checkpoint at the end
+    (torch.save doesn't know or care that the weights are garbage), and
+    every downstream consumer (evaluate.py, error_analysis.py) would then
+    silently produce meaningless metrics from a corrupted model with no
+    indication anything went wrong. Common real causes: a learning rate
+    too high for a given config change, or a data/config edit that broke
+    the signal-to-noise ratio DataConfig's own validation can't catch
+    (validation checks values are well-formed, not that they combine into
+    a learnable task)."""
+
+
 def frame_accuracy(logits: torch.Tensor, labels: torch.Tensor) -> float:
     """Quick training-progress signal only - the authoritative, full metric
     stack (frame acc + segmental F1/edit score + product metrics) lives in
@@ -49,10 +64,19 @@ def train(cfg: ExperimentConfig, output_path: Path) -> PhaseSegmentationModel:
     for epoch in range(1, cfg.train.epochs + 1):
         model.train()
         epoch_loss, epoch_acc, n_batches = 0.0, 0.0, 0
-        for batch in train_loader:
+        for batch_idx, batch in enumerate(train_loader):
             optimizer.zero_grad()
             all_logits = model(batch["features"], batch["camera_mask"])
             loss = compute_loss(all_logits, batch["labels"], cfg.train.smoothing_loss_weight)
+
+            if not torch.isfinite(loss):
+                raise TrainingDivergedError(
+                    f"Non-finite loss ({loss.item()}) at epoch {epoch}, batch {batch_idx}. "
+                    f"Stopping immediately rather than checkpointing a corrupted model - "
+                    f"try a lower TrainConfig.lr, or check whether a recent DataConfig change "
+                    f"reduced the class signal-to-noise ratio below what's learnable."
+                )
+
             loss.backward()
             optimizer.step()
 
