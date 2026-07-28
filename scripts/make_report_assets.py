@@ -111,7 +111,10 @@ def main() -> None:
         ax.add_patch(
             plt.Rectangle((-0.3, y - 0.05), 12.8, BAND_HEIGHT, facecolor="#f0f0ee", edgecolor="none", zorder=1)
         )
-        ax.text(-0.2, y + BAND_HEIGHT / 2 - 0.05, label, ha="left", va="center", fontsize=9, color=TEXT_PRIMARY, weight="bold", zorder=2)
+        ax.text(
+            -0.2, y + BAND_HEIGHT / 2 - 0.05, label,
+            ha="left", va="center", fontsize=9, color=TEXT_PRIMARY, weight="bold", zorder=2,
+        )
 
     # Edge band
     cam = draw_box(ax, (1.6, 3.1), 2.6, 0.75, "1-3 OR Cameras\n(PTP/IEEE-1588 timestamping)", EDGE_COLOR)
@@ -133,7 +136,11 @@ def main() -> None:
 
     # Compute band
     gate = draw_box(ax, (0.6, 1.1), 3.0, 0.75, "Lambda / Fargate\nmotion-gate (always-on)", COMPUTE_COLOR)
-    pool = draw_box(ax, (4.6, 1.1), 4.4, 0.75, "SageMaker Real-Time GPU pool\n(Multi-Model Endpoint, Triton batching,\nApplication Auto Scaling)", COMPUTE_COLOR)
+    pool = draw_box(
+        ax, (4.6, 1.1), 4.4, 0.75,
+        "SageMaker Real-Time GPU pool\n(Multi-Model Endpoint, Triton batching,\nApplication Auto Scaling)",
+        COMPUTE_COLOR,
+    )
     draw_arrow(ax, box_edge_point(kds, "bottom"), box_edge_point(gate, "top"))
     draw_arrow(
         ax, box_edge_point(gate, "right"), box_edge_point(pool, "left"),
@@ -141,8 +148,13 @@ def main() -> None:
     )
 
     # Storage / output band
-    out = draw_box(ax, (4.6, 0.1), 2.8, 0.75, "Phase predictions\n+ hard-example embeddings", STORAGE_COLOR, text_color=TEXT_PRIMARY)
-    s3 = draw_box(ax, (8.2, 0.1), 3.6, 0.75, "S3 (Parquet) / OpenSearch\nLifecycle + ISM TTL = N days", STORAGE_COLOR, text_color=TEXT_PRIMARY)
+    out = draw_box(
+        ax, (4.6, 0.1), 2.8, 0.75, "Phase predictions\n+ hard-example embeddings", STORAGE_COLOR, text_color=TEXT_PRIMARY
+    )
+    s3 = draw_box(
+        ax, (8.2, 0.1), 3.6, 0.75, "S3 (Parquet) / OpenSearch\nLifecycle + ISM TTL = N days",
+        STORAGE_COLOR, text_color=TEXT_PRIMARY,
+    )
     draw_arrow(ax, box_edge_point(pool, "bottom"), box_edge_point(out, "top"))
     draw_arrow(ax, box_edge_point(out, "right"), box_edge_point(s3, "left"))
     # KVS -> S3 would cross straight through the compute band boxes below it;

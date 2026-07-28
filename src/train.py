@@ -12,7 +12,7 @@ import argparse
 import shutil
 import time
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import torch
@@ -65,7 +65,7 @@ def save_checkpoint_with_backup(checkpoint: dict, output_path: Path, keep_last: 
         # can land within the same second - second-resolution timestamps
         # collided and silently overwrote each other, caught by
         # tests/test_robustness.py::test_checkpoint_backup_rotation_keeps_bounded_history.
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
         backup_path = backup_dir / f"{output_path.stem}_{timestamp}{output_path.suffix}"
         shutil.copy2(output_path, backup_path)
 

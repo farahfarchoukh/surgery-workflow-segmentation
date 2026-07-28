@@ -6,13 +6,20 @@ test here asserts either "fails loudly with a clear error" or "degrades
 gracefully (stays finite)" - never "silently produces something wrong."
 """
 
-from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
-from src.config import DataConfig, EvalConfig, ExperimentConfig, ModelConfig, NUM_CLASSES, PHASE_LABELS, TrainConfig
+from src.config import (
+    NUM_CLASSES,
+    PHASE_LABELS,
+    DataConfig,
+    EvalConfig,
+    ExperimentConfig,
+    ModelConfig,
+    TrainConfig,
+)
 from src.data import SurgeryPhaseDataset, collate_cases
 from src.evaluate import CorruptedCheckpointError, compute_batch_logits, load_model
 from src.model import PhaseSegmentationModel

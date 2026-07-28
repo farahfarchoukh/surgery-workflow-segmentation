@@ -53,7 +53,7 @@ import torch
 from src.config import PHASE_LABELS, ExperimentConfig, build_allowed_transition_matrix, set_seed
 from src.data import SurgeryPhaseDataset, SyntheticCase, generate_class_prototypes
 from src.evaluate import compute_batch_logits, load_model
-from src.metrics import frame_accuracy_by_class, segmental_f1_by_class, segment_count_by_class
+from src.metrics import frame_accuracy_by_class, segment_count_by_class, segmental_f1_by_class
 from src.postprocess import frames_to_segments, generate_timeline
 
 TARGET_CLASSES = {"patient_present", "operation"}

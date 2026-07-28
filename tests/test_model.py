@@ -5,7 +5,12 @@ safety net (never let softmax attention over cameras go all -inf)."""
 import torch
 
 from src.config import NUM_CLASSES, ModelConfig
-from src.model import CameraFusion, PhaseSegmentationModel, compute_receptive_field_frames, count_params
+from src.model import (
+    CameraFusion,
+    PhaseSegmentationModel,
+    compute_receptive_field_frames,
+    count_params,
+)
 
 
 def tiny_model_config(**overrides) -> ModelConfig:

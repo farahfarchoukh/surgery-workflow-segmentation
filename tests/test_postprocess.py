@@ -5,7 +5,7 @@ any future retraining)."""
 
 import numpy as np
 
-from src.config import ExperimentConfig, PHASE_LABELS, build_allowed_transition_matrix
+from src.config import PHASE_LABELS, ExperimentConfig, build_allowed_transition_matrix
 from src.postprocess import (
     Segment,
     coalesce_adjacent,

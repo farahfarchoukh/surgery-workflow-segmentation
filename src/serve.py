@@ -32,12 +32,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from src.config import ExperimentConfig, PHASE_LABELS, build_allowed_transition_matrix
+from src.config import PHASE_LABELS, ExperimentConfig, build_allowed_transition_matrix
 from src.data import SyntheticSurgeryGenerator
 from src.evaluate import CorruptedCheckpointError, load_model
 from src.logging_config import setup_logging
 from src.model import PhaseSegmentationModel
-from src.postprocess import frames_to_segments, generate_timeline
+from src.postprocess import generate_timeline
 
 logger = setup_logging("serve")
 
@@ -163,7 +163,8 @@ def health() -> dict:
 def root() -> dict:
     return {
         "service": "Proximie OR Phase Segmentation - local serving demo",
-        "note": "Local demonstration of the SageMaker Real-Time endpoint pattern (report Sec 4.3.1), not a deployed cloud service.",
+        "note": "Local demonstration of the SageMaker Real-Time endpoint pattern (report Sec 4.3.1), "
+        "not a deployed cloud service.",
         "endpoints": ["/health", "/predict/synthetic (POST)", "/predict (POST)", "/docs"],
     }
 
@@ -198,7 +199,8 @@ def predict(req: RawPredictRequest) -> PredictionResponse:
     if mask_np.shape != features_np.shape[:2]:
         raise HTTPException(
             status_code=422,
-            detail=f"camera_mask shape {list(mask_np.shape)} must match features' [cameras, frames] = {list(features_np.shape[:2])}",
+            detail=f"camera_mask shape {list(mask_np.shape)} must match "
+            f"features' [cameras, frames] = {list(features_np.shape[:2])}",
         )
 
     return _run_inference(torch.from_numpy(features_np), torch.from_numpy(mask_np))

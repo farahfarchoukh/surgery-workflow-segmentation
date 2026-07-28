@@ -161,9 +161,9 @@ def make_dual_dilated_stack(hidden_dim: int, kernel_size: int, num_layers: int, 
     2^(L-1-l) (local precision available at every depth, not just shallow
     layers) - see module docstring for why this dual schedule is the point."""
     layers = []
-    for l in range(num_layers):
-        dilation_a = 2**l
-        dilation_b = 2 ** (num_layers - 1 - l)
+    for depth in range(num_layers):
+        dilation_a = 2**depth
+        dilation_b = 2 ** (num_layers - 1 - depth)
         layers.append(DualDilatedResidualLayer(hidden_dim, kernel_size, dilation_a, dilation_b, dropout))
     return nn.ModuleList(layers)
 
@@ -261,9 +261,9 @@ def _stack_receptive_field(kernel_size: int, num_layers: int) -> int:
     per-layer contributions sum. +1 for the single frame at zero look-back.
     """
     total = 1
-    for l in range(num_layers):
-        dilation_a = 2**l
-        dilation_b = 2 ** (num_layers - 1 - l)
+    for depth in range(num_layers):
+        dilation_a = 2**depth
+        dilation_b = 2 ** (num_layers - 1 - depth)
         total += (kernel_size - 1) * max(dilation_a, dilation_b)
     return total
 

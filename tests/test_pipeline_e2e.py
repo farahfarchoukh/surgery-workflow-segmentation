@@ -5,7 +5,6 @@ failure modes" requirement itself, not just "the code runs without
 crashing" - see the final assertion.
 """
 
-from pathlib import Path
 
 from src.config import DataConfig, EvalConfig, ExperimentConfig, ModelConfig, TrainConfig
 from src.error_analysis import run_error_analysis

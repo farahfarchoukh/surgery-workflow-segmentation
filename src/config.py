@@ -218,7 +218,7 @@ class ExperimentConfig:
     eval: EvalConfig = field(default_factory=EvalConfig)
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "ExperimentConfig":
+    def from_yaml(cls, path: str | Path) -> ExperimentConfig:
         with open(path) as f:
             raw = yaml.safe_load(f) or {}
         return cls(

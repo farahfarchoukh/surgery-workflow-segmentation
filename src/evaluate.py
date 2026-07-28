@@ -28,7 +28,14 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from src.config import NUM_CLASSES, PHASE_LABELS, ExperimentConfig, ModelConfig, build_allowed_transition_matrix, set_seed
+from src.config import (
+    NUM_CLASSES,
+    PHASE_LABELS,
+    ExperimentConfig,
+    ModelConfig,
+    build_allowed_transition_matrix,
+    set_seed,
+)
 from src.data import SurgeryPhaseDataset, SyntheticCase, collate_cases
 from src.metrics import MetricsReport, compute_all_metrics
 from src.model import PhaseSegmentationModel
@@ -175,8 +182,14 @@ def print_comparison(agg_raw: dict, agg_post: dict) -> None:
         f"{lat_raw if lat_raw is not None else float('nan'):>12.1f} "
         f"{lat_post if lat_post is not None else float('nan'):>16.1f}"
     )
-    print(f"{'transitions missed (total)':<28s} {agg_raw['boundary_latency_missed_total']:>12d} {agg_post['boundary_latency_missed_total']:>16d}")
-    print(f"{'cost-weighted total':<28s} {agg_raw['cost_weighted_total']['cost']:>12.1f} {agg_post['cost_weighted_total']['cost']:>16.1f}")
+    print(
+        f"{'transitions missed (total)':<28s} "
+        f"{agg_raw['boundary_latency_missed_total']:>12d} {agg_post['boundary_latency_missed_total']:>16d}"
+    )
+    print(
+        f"{'cost-weighted total':<28s} "
+        f"{agg_raw['cost_weighted_total']['cost']:>12.1f} {agg_post['cost_weighted_total']['cost']:>16.1f}"
+    )
     print("\nphase-duration error (seconds), postprocessed:")
     for name, val in agg_post["phase_duration_error_seconds"].items():
         print(f"  {name:<18s} {val:>8.1f}s")

@@ -5,11 +5,18 @@ description = "OR workflow phase segmentation prototype - Proximie Senior ML Eng
 requires-python = ">=3.12"
 
 [tool.ruff]
-line-length = 100
+# 130, not the default 88/100: this codebase deliberately writes longer
+# explanatory comments/docstrings (the WHY behind non-obvious decisions,
+# per project convention) rather than wrapping them into short fragments -
+# see README/report for why that verbosity is intentional here.
+line-length = 130
 target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP"]
+ignore = [
+    "N812",  # `import torch.nn.functional as F` is the universal PyTorch convention, not a real naming problem
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

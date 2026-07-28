@@ -3,12 +3,11 @@ uvicorn process needed, but exercises the real ASGI app: routing,
 pydantic validation, the lifespan startup hook, and the global exception
 handler, exactly as a live server would."""
 
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from src.config import DataConfig, EvalConfig, ExperimentConfig, ModelConfig, NUM_CLASSES, TrainConfig
+from src.config import DataConfig, EvalConfig, ExperimentConfig, ModelConfig, TrainConfig
 from src.train import train
 
 

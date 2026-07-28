@@ -1,0 +1,11 @@
+.venv/
+outputs/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.git/
+.gitignore
+report/*.pdf
+report/diagrams/*.png
+*.egg-info/

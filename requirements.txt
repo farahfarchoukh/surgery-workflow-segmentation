@@ -6,6 +6,7 @@ torch>=2.4
 numpy>=1.26
 pyyaml>=6.0
 pytest>=8.0
+ruff>=0.5  # lint, run in CI - see pyproject.toml [tool.ruff]
 
 # Pure-Python report tooling: no pandoc/node/graphviz available in this environment,
 # so PDF generation and diagramming both use pip-only, no-system-binary libraries.
