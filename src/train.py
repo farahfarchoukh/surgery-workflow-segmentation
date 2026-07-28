@@ -9,6 +9,7 @@ code on top.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import time
 from dataclasses import asdict
@@ -54,7 +55,17 @@ def save_checkpoint_with_backup(checkpoint: dict, output_path: Path, keep_last: 
     logging_config.py: bounded history (`keep_last`), never zero history.
     A bad training run overwriting the last good checkpoint with no way
     back is exactly the kind of silent data loss a production training
-    pipeline shouldn't allow by default."""
+    pipeline shouldn't allow by default.
+
+    The final write is atomic (write to a temp file in the same directory,
+    then os.replace): torch.save writes directly to its destination path
+    by default, which is NOT atomic - a reader (evaluate.py, serve.py)
+    polling or loading the checkpoint at the exact moment a concurrent
+    train() call is mid-write would see a truncated/corrupted file. Caught
+    via manual review, not a test - the failure window is real but hard to
+    hit deterministically in a unit test; os.replace() is the standard fix
+    (same-filesystem rename is atomic on POSIX, and Windows' os.replace
+    specifically allows replacing an existing destination, unlike os.rename)."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     backup_dir = output_path.parent / "backups"
 
@@ -73,7 +84,9 @@ def save_checkpoint_with_backup(checkpoint: dict, output_path: Path, keep_last: 
         for stale in existing_backups[:-keep_last]:
             stale.unlink()
 
-    torch.save(checkpoint, output_path)
+    tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    torch.save(checkpoint, tmp_path)
+    os.replace(tmp_path, output_path)
 
 
 def train(cfg: ExperimentConfig, output_path: Path) -> PhaseSegmentationModel:

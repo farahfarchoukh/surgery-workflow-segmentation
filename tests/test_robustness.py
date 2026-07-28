@@ -273,3 +273,21 @@ def test_checkpoint_backup_rotation_first_write_creates_no_backup(tmp_path):
 
     assert output_path.exists()
     assert not (tmp_path / "backups").exists()
+
+
+def test_checkpoint_write_is_atomic_no_leftover_temp_file(tmp_path):
+    """save_checkpoint_with_backup writes to a temp file and os.replace()s
+    it into place, rather than torch.save()-ing directly to output_path -
+    a reader (evaluate.py/serve.py) racing a concurrent train() call could
+    otherwise see a truncated/corrupted file mid-write. This test checks
+    the observable contract: no .tmp artifact left behind, and the final
+    file is exactly what was written (never a partial state)."""
+    from src.train import save_checkpoint_with_backup
+
+    output_path = tmp_path / "checkpoint.pt"
+    save_checkpoint_with_backup({"marker": "first"}, output_path, keep_last=3)
+    assert not output_path.with_suffix(".pt.tmp").exists()
+
+    save_checkpoint_with_backup({"marker": "second"}, output_path, keep_last=3)
+    assert not output_path.with_suffix(".pt.tmp").exists()
+    assert torch.load(output_path, weights_only=True)["marker"] == "second"
