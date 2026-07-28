@@ -12,3 +12,9 @@ pytest>=8.0
 markdown>=3.6
 xhtml2pdf>=0.2.16
 matplotlib>=3.9
+
+# Local serving demo (src/serve.py) - mirrors the SageMaker Real-Time
+# endpoint pattern from the report, runnable locally without a cloud account.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+httpx>=0.27  # test-only: FastAPI's in-process TestClient needs it

@@ -9,8 +9,10 @@ code on top.
 from __future__ import annotations
 
 import argparse
+import shutil
 import time
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
@@ -18,6 +20,7 @@ from torch.utils.data import DataLoader
 
 from src.config import NUM_CLASSES, ExperimentConfig, set_seed
 from src.data import SurgeryPhaseDataset, collate_cases
+from src.logging_config import setup_logging
 from src.model import PhaseSegmentationModel, compute_loss, count_params
 
 
@@ -44,7 +47,43 @@ def frame_accuracy(logits: torch.Tensor, labels: torch.Tensor) -> float:
     return (preds == labels).float().mean().item()
 
 
+def save_checkpoint_with_backup(checkpoint: dict, output_path: Path, keep_last: int = 3) -> None:
+    """Writes the checkpoint, but first rotates any existing file at
+    `output_path` into a timestamped backup instead of silently
+    overwriting it - the same rationale as the rotating log handler in
+    logging_config.py: bounded history (`keep_last`), never zero history.
+    A bad training run overwriting the last good checkpoint with no way
+    back is exactly the kind of silent data loss a production training
+    pipeline shouldn't allow by default."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    backup_dir = output_path.parent / "backups"
+
+    if output_path.exists():
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        # Microsecond precision, not just seconds: rapid successive saves
+        # (e.g. a hyperparameter-search loop calling train() repeatedly)
+        # can land within the same second - second-resolution timestamps
+        # collided and silently overwrote each other, caught by
+        # tests/test_robustness.py::test_checkpoint_backup_rotation_keeps_bounded_history.
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup_path = backup_dir / f"{output_path.stem}_{timestamp}{output_path.suffix}"
+        shutil.copy2(output_path, backup_path)
+
+        existing_backups = sorted(backup_dir.glob(f"{output_path.stem}_*{output_path.suffix}"))
+        for stale in existing_backups[:-keep_last]:
+            stale.unlink()
+
+    torch.save(checkpoint, output_path)
+
+
 def train(cfg: ExperimentConfig, output_path: Path) -> PhaseSegmentationModel:
+    logger = setup_logging("train")
+    logger.info("training run starting: output_path=%s", output_path)
+    logger.info(
+        "config: seed=%d epochs=%d lr=%g batch_size=%d seq_len=%d feature_dim=%d",
+        cfg.data.seed, cfg.train.epochs, cfg.train.lr, cfg.train.batch_size, cfg.data.seq_len, cfg.data.feature_dim,
+    )
+
     set_seed(cfg.data.seed)
     torch.set_num_threads(cfg.train.num_threads)
 
@@ -56,7 +95,9 @@ def train(cfg: ExperimentConfig, output_path: Path) -> PhaseSegmentationModel:
     val_loader = DataLoader(val_ds, batch_size=cfg.train.batch_size, collate_fn=collate_cases)
 
     model = PhaseSegmentationModel(cfg.model, cfg.data.feature_dim, NUM_CLASSES)
-    print(f"model param count: {count_params(model):,}")
+    param_count = count_params(model)
+    print(f"model param count: {param_count:,}")
+    logger.info("model instantiated: %d parameters", param_count)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.train.lr)
 
@@ -70,6 +111,7 @@ def train(cfg: ExperimentConfig, output_path: Path) -> PhaseSegmentationModel:
             loss = compute_loss(all_logits, batch["labels"], cfg.train.smoothing_loss_weight)
 
             if not torch.isfinite(loss):
+                logger.error("non-finite loss %s at epoch %d, batch %d - aborting", loss.item(), epoch, batch_idx)
                 raise TrainingDivergedError(
                     f"Non-finite loss ({loss.item()}) at epoch {epoch}, batch {batch_idx}. "
                     f"Stopping immediately rather than checkpointing a corrupted model - "
@@ -92,17 +134,19 @@ def train(cfg: ExperimentConfig, output_path: Path) -> PhaseSegmentationModel:
                     all_logits = model(batch["features"], batch["camera_mask"])
                     val_acc += frame_accuracy(all_logits[-1], batch["labels"])
                     val_batches += 1
-            print(
+            msg = (
                 f"epoch {epoch:3d}/{cfg.train.epochs}  "
                 f"train_loss={epoch_loss / n_batches:.4f}  "
                 f"train_frame_acc={epoch_acc / n_batches:.3f}  "
                 f"val_frame_acc={val_acc / val_batches:.3f}"
             )
+            print(msg)
+            logger.info(msg)
 
     elapsed = time.time() - start
     print(f"training finished in {elapsed:.1f}s on CPU")
+    logger.info("training finished in %.1fs", elapsed)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     # Deliberately NOT pickling `cfg` (an ExperimentConfig dataclass) into the
     # checkpoint: torch.load can only skip its weights_only safety check for
     # a small allowlist of built-in types (tensors, dict/list/str/int/float),
@@ -118,8 +162,9 @@ def train(cfg: ExperimentConfig, output_path: Path) -> PhaseSegmentationModel:
         "feature_dim": cfg.data.feature_dim,
         "num_classes": NUM_CLASSES,
     }
-    torch.save(checkpoint, output_path)
+    save_checkpoint_with_backup(checkpoint, output_path)
     print(f"checkpoint saved to {output_path}")
+    logger.info("checkpoint saved to %s (previous version, if any, backed up)", output_path)
     return model
 
 

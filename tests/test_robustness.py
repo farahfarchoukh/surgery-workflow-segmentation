@@ -228,3 +228,41 @@ def test_single_camera_case_with_frequent_full_dropout_never_nans():
     model.train()  # also exercise view-dropout composing with sync loss
     logits = model(batch["features"], batch["camera_mask"])[-1]
     assert torch.isfinite(logits).all()
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint backup rotation: bounded history, never silent overwrite
+# ---------------------------------------------------------------------------
+
+
+def test_checkpoint_backup_rotation_keeps_bounded_history(tmp_path):
+    from src.train import save_checkpoint_with_backup
+
+    output_path = tmp_path / "checkpoint.pt"
+    backup_dir = tmp_path / "backups"
+
+    for i in range(5):
+        save_checkpoint_with_backup({"marker": i}, output_path, keep_last=3)
+
+    assert output_path.exists()
+    latest = torch.load(output_path, weights_only=True)
+    assert latest["marker"] == 4  # the most recent write, not overwritten-then-lost
+
+    backups = sorted(backup_dir.glob("checkpoint_*.pt"))
+    assert len(backups) == 3, f"expected rotation to cap at 3 backups, found {len(backups)}"
+
+    # the retained backups must be the 3 MOST RECENT prior versions (0-3 were
+    # written before the final save; first write has no backup since
+    # output_path didn't exist yet, so backups exist for writes 1,2,3)
+    markers = sorted(torch.load(b, weights_only=True)["marker"] for b in backups)
+    assert markers == [1, 2, 3]
+
+
+def test_checkpoint_backup_rotation_first_write_creates_no_backup(tmp_path):
+    from src.train import save_checkpoint_with_backup
+
+    output_path = tmp_path / "checkpoint.pt"
+    save_checkpoint_with_backup({"marker": 0}, output_path, keep_last=3)
+
+    assert output_path.exists()
+    assert not (tmp_path / "backups").exists()
