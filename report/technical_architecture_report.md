@@ -732,7 +732,7 @@ answering.
   synchronization), no config-composition framework (every dataclass
   validates its own invariants instead), a single `config/default.yaml`
   reproducibility artifact, checkpoints that never pickle arbitrary objects
-  (`weights_only=True`), and a 34-test suite (~5.5-7s) including
+  (`weights_only=True`), and a 49-test suite (~6s) including
   hand-computed known-answer checks for the metrics, a direct causality
   proof, and an empirically-verified receptive-field calculation for the
   model.

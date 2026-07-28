@@ -13,6 +13,67 @@ temporal model, clean separation of the 5 required components, and an
 error-analysis script that deliberately reproduces the two named failure
 modes ("patient_present" fragmentation, "operation" occlusion).
 
+## Production-readiness scope: what's real here vs. what's architecture
+
+This repo is a training/evaluation pipeline, not a deployed service - so
+"production readiness" means two different things depending on which layer
+you're asking about, and it's worth being explicit about the line rather
+than blurring it with decorative code that doesn't actually do anything.
+
+**Implemented and tested in this repo** (`tests/test_robustness.py`):
+
+- **Fail-fast on numerical divergence** — training detects a non-finite
+  loss and raises immediately, before a corrupted checkpoint can be
+  written (`TrainingDivergedError`, `src/train.py`).
+- **Fail-fast on corrupted/malformed artifacts** — checkpoint loading
+  wraps pickle errors, missing keys, and architecture mismatches into one
+  consistent, actionable error (`CorruptedCheckpointError`,
+  `src/evaluate.py`) instead of a different raw traceback per failure mode.
+- **Checkpoint security** — `weights_only=True` throughout; a checkpoint
+  never needs to be trusted to unpickle arbitrary code, including one from
+  an unknown source.
+- **Config validation** — every dataclass rejects invalid values at
+  construction time (`src/config.py` `__post_init__`), not deep inside a
+  matrix operation three modules later.
+- **Batched inference, measured not assumed** — `evaluate.py`/
+  `error_analysis.py` batch the model forward pass across cases rather
+  than looping one at a time. This was benchmarked before being adopted:
+  case-level thread-pool parallelism was actually 25-45% *slower* at this
+  model's size (measured, not guessed) and was rejected; batching measured
+  1.1x-7.9x faster and is what shipped. It's also the same mechanism Sec
+  4.3.2 of the report describes for production (Triton dynamic batching on
+  SageMaker Multi-Model Endpoints) - exercised locally here, not just
+  described.
+- **Robustness under adversarial data conditions** — near-total
+  camera-sync loss, a sequence shorter than the model's own receptive
+  field, single-camera cases with frequent full dropout: all verified to
+  degrade gracefully (stay finite) rather than crash or produce NaN.
+
+**Described in the architecture report, not implemented here** (because it
+requires infrastructure that doesn't exist in a training-script repo, not
+because it was skipped) - Sec 4.3-4.5:
+
+- **Retries and circuit breakers between distributed services** — belongs
+  at the AWS service boundary (Lambda/Fargate ↔ SageMaker, Sec 4.3.1), not
+  inside a synchronous training/eval script that has no distributed calls
+  to retry.
+- **Autoscaling and load balancing across a GPU pool** — Application Auto
+  Scaling sizing the SageMaker Real-Time endpoint pool (Sec 4.3.1) is a
+  deployment-time concern; there's no pool to scale in a local repo.
+- **Concurrent request handling at the serving layer** — real concurrency
+  in production comes from Triton's dynamic batching serving many OR
+  streams' requests concurrently (Sec 4.3.2), which is the same batching
+  principle this repo *does* implement and measure locally, just without
+  an actual multi-tenant serving endpoint to batch requests from.
+- **Production monitoring/alerting infrastructure** — Sec 4.4 specifies
+  *what* to monitor (confidence collapse, camera desync, fragmentation
+  rate, per-hospital breakdown) and *why* each one matters; there's no
+  running CloudWatch/monitoring stack in this repo to wire it into.
+- **Security controls** (encryption, IAM, VPC, secrets management, audit
+  logging - Sec 4.5) — these secure deployed AWS resources; there are none
+  deployed here to secure. The one security control that *does* apply to
+  a local repo (not trusting a pickled checkpoint) is implemented, above.
+
 ## Reproducibility
 
 Everything below is exact, not approximate — copy-paste-run this and you
@@ -25,7 +86,7 @@ timings will vary with your hardware).
 | **Python version** | 3.12 (provisioned automatically by `uv`, independent of your system Python — see [Environment note](#environment-note)) |
 | **Dependencies** | Pinned in `requirements.txt` (abstract) and `requirements-lock.txt` (exact versions actually installed, via `uv pip freeze`) |
 | **Installation** | `make bootstrap` (no sudo/root required — see below) |
-| **Run tests** | `make test` → `34 tests, ~5.5-7s, fully deterministic` |
+| **Run tests** | `make test` → `49 tests, ~6s, fully deterministic` |
 | **Train** | `make train` → writes `outputs/checkpoint.pt` |
 | **Evaluate** | `make evaluate` → writes `outputs/eval_report.json`, prints raw-vs-postprocessed comparison |
 | **Error analysis** | `make error-analysis` → writes `outputs/error_analysis_report.json`, prints per-class noisy-vs-clean breakdown |
@@ -48,7 +109,7 @@ matrix operation later.
 git clone <this repo>
 cd proximie-mle-challenge
 make bootstrap        # uv venv (Python 3.12) + pinned deps, no sudo
-make test              # 34 tests, ~5.5-7s
+make test              # 49 tests, ~6s
 make train              # ~30-35s CPU, writes outputs/checkpoint.pt
 make evaluate            # writes outputs/eval_report.json
 make error-analysis       # writes outputs/error_analysis_report.json
@@ -66,7 +127,7 @@ make bootstrap     # uv-managed Python 3.12 venv + pinned CPU-only deps (no sudo
 make train         # ~30-35s on CPU: trains the temporal model on synthetic data
 make evaluate       # raw-vs-postprocessed metrics on the held-out validation split
 make error-analysis # noisy-vs-clean per-class breakdown - the "proof of understanding" script
-make test           # 34 tests, ~5.5-7s, fully deterministic
+make test           # 49 tests, ~6s, fully deterministic
 make report          # renders the AWS diagram + builds technical_architecture_report.pdf
 ```
 
@@ -116,7 +177,7 @@ src/
   metrics.py                    Dual Metric Stack (component 4)
   evaluate.py                   orchestrates data -> model -> postprocess -> metrics
   error_analysis.py             Mock Error Analysis Script (component 5)
-tests/                          34 tests, hand-computed known answers where it matters
+tests/                          49 tests, hand-computed known answers where it matters
 report/
   technical_architecture_report.md   Deliverable 2 source
   diagrams/aws_architecture.{mmd,png}
