@@ -26,6 +26,8 @@ CSS = """
   h3 { font-size: 10.5pt; margin-top: 7pt; }
   p { margin: 3pt 0; text-align: justify; }
   code { background: #f0f0ee; padding: 1pt 3pt; font-family: Courier, monospace; font-size: 8.5pt; }
+  pre { background: #f0f0ee; padding: 6pt 8pt; font-family: Courier, monospace; font-size: 7.5pt; line-height: 1.25; white-space: pre; }
+  pre code { background: transparent; padding: 0; }
   table { border-collapse: collapse; width: 100%; margin: 6pt 0; font-size: 8.5pt; }
   th, td { border: 0.5pt solid #999; padding: 4pt 6pt; text-align: left; }
   th { background: #f0f0ee; }
