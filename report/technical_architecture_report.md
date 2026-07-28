@@ -246,9 +246,10 @@ flowchart TB
     KVS -.-> S3
 ```
 
-*(static PNG render: `diagrams/aws_architecture.png`, generated via
-`scripts/make_report_assets.py` since mermaid-cli/graphviz are unavailable
-in this dev environment - see README.)*
+![AWS architecture: multi-camera ingestion, live inference, retention-compliant storage](diagrams/aws_architecture.png)
+
+*(Static PNG render, generated via `scripts/make_report_assets.py` since
+mermaid-cli/graphviz are unavailable in this dev environment - see README.)*
 
 **Ingestion.** **Kinesis Video Streams with WebRTC Ingestion** (GA Nov 2023)
 is the on-demand raw-video path - sub-1-second latency, the hospital gateway

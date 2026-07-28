@@ -1,0 +1,28 @@
+flowchart TB
+    subgraph Edge["Hospital Gateway (Edge)"]
+        CAM["1-3 OR Cameras\n(PTP/IEEE-1588 hardware timestamping)"]
+        GW["AWS IoT Greengrass\n(edge feature extraction)"]
+        CAM --> GW
+    end
+
+    subgraph Steady["Steady-State Path (default, low bandwidth)"]
+        KDS["Kinesis Data Streams\n(per-camera embeddings)"]
+    end
+
+    subgraph OnDemand["On-Demand Path (raw video, short TTL)"]
+        KVS["Kinesis Video Streams\nWebRTC Ingestion"]
+    end
+
+    GW -- "embeddings, always-on" --> KDS
+    GW -. "raw video, only when triggered" .-> KVS
+
+    subgraph Cloud["AWS Inference"]
+        GATE["Lambda / Fargate\nmotion-gate (always-on, cheap)"]
+        POOL["SageMaker Real-Time GPU pool\n(Multi-Model Endpoint, Triton batching,\nApplication Auto Scaling)"]
+        KDS --> GATE
+        GATE -- "active signal" --> POOL
+    end
+
+    POOL --> OUT["Phase predictions\n+ hard-example embeddings"]
+    OUT --> S3["S3 (Parquet) / OpenSearch\nLifecycle + ISM TTL = N days"]
+    KVS -.-> S3
