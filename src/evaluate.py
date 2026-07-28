@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from src.config import NUM_CLASSES, PHASE_LABELS, ExperimentConfig, build_allowed_transition_matrix, set_seed
+from src.config import NUM_CLASSES, PHASE_LABELS, ExperimentConfig, ModelConfig, build_allowed_transition_matrix, set_seed
 from src.data import SurgeryPhaseDataset
 from src.metrics import MetricsReport, compute_all_metrics
 from src.model import PhaseSegmentationModel
@@ -25,8 +25,24 @@ from src.postprocess import frames_to_segments, generate_timeline, segments_to_f
 
 
 def load_model(cfg: ExperimentConfig, checkpoint_path: Path) -> PhaseSegmentationModel:
-    model = PhaseSegmentationModel(cfg.model, cfg.data.feature_dim, NUM_CLASSES)
-    ckpt = torch.load(checkpoint_path, weights_only=False)
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(
+            f"No checkpoint at {checkpoint_path}. Train one first: "
+            f"`make train` or `python -m src.train --output {checkpoint_path}`."
+        )
+    # weights_only=True (the safe default since PyTorch 2.6): the checkpoint
+    # was saved as tensors + plain dict/str/int, no pickled custom classes
+    # (see train.train's checkpoint-writing comment), so nothing here needs
+    # to unpickle arbitrary code.
+    ckpt = torch.load(checkpoint_path, weights_only=True)
+
+    # ckpt["model_config"] takes precedence over cfg.model: the checkpoint is
+    # self-describing about the ARCHITECTURE it was actually trained with, so
+    # loading it against a caller-supplied cfg.model that has since drifted
+    # (e.g. someone edited config/default.yaml after training) fails loudly
+    # via a state_dict shape mismatch instead of silently loading garbage.
+    model_cfg = ModelConfig(**ckpt["model_config"]) if "model_config" in ckpt else cfg.model
+    model = PhaseSegmentationModel(model_cfg, ckpt.get("feature_dim", cfg.data.feature_dim), ckpt.get("num_classes", NUM_CLASSES))
     model.load_state_dict(ckpt["model_state"])
     model.eval()
     return model

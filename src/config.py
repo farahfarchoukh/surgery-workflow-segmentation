@@ -88,6 +88,31 @@ class DataConfig:
     num_train_sequences: int = 32
     num_val_sequences: int = 8
 
+    def __post_init__(self) -> None:
+        if self.feature_dim <= 0:
+            raise ValueError(f"feature_dim must be positive, got {self.feature_dim}")
+        if self.seq_len <= 0:
+            raise ValueError(f"seq_len must be positive, got {self.seq_len}")
+        if self.min_cameras < 1:
+            raise ValueError(f"min_cameras must be >= 1, got {self.min_cameras}")
+        if self.max_cameras < self.min_cameras:
+            raise ValueError(f"max_cameras ({self.max_cameras}) must be >= min_cameras ({self.min_cameras})")
+        if len(self.phase_duration_weights) != NUM_CLASSES:
+            raise ValueError(
+                f"phase_duration_weights must have {NUM_CLASSES} entries (one per PHASE_LABELS), "
+                f"got {len(self.phase_duration_weights)}"
+            )
+        if any(w <= 0 for w in self.phase_duration_weights):
+            raise ValueError(f"phase_duration_weights must all be positive, got {self.phase_duration_weights}")
+        if self.phase_duration_gamma_shape <= 0:
+            raise ValueError(f"phase_duration_gamma_shape must be positive, got {self.phase_duration_gamma_shape}")
+        if self.feature_noise_std < 0 or self.cross_camera_noise_std < 0:
+            raise ValueError("noise std values must be non-negative")
+        if self.seconds_per_frame <= 0:
+            raise ValueError(f"seconds_per_frame must be positive, got {self.seconds_per_frame}")
+        if self.num_train_sequences <= 0 or self.num_val_sequences <= 0:
+            raise ValueError("num_train_sequences and num_val_sequences must be positive")
+
 
 @dataclass
 class ModelConfig:
@@ -100,6 +125,22 @@ class ModelConfig:
     dropout: float = 0.15
     view_dropout_prob: float = 0.3  # P(a given camera is zeroed) during training, see model.py
 
+    def __post_init__(self) -> None:
+        if self.fusion_dim <= 0 or self.hidden_dim <= 0:
+            raise ValueError("fusion_dim and hidden_dim must be positive")
+        if self.kernel_size < 1:
+            raise ValueError(f"kernel_size must be >= 1, got {self.kernel_size}")
+        if self.stage1_layers < 1:
+            raise ValueError(f"stage1_layers must be >= 1, got {self.stage1_layers}")
+        if self.num_refine_stages < 0:
+            raise ValueError(f"num_refine_stages must be >= 0, got {self.num_refine_stages}")
+        if self.num_refine_stages > 0 and self.refine_layers < 1:
+            raise ValueError("refine_layers must be >= 1 when num_refine_stages > 0")
+        if not (0.0 <= self.dropout < 1.0):
+            raise ValueError(f"dropout must be in [0, 1), got {self.dropout}")
+        if not (0.0 <= self.view_dropout_prob <= 1.0):
+            raise ValueError(f"view_dropout_prob must be in [0, 1], got {self.view_dropout_prob}")
+
 
 @dataclass
 class TrainConfig:
@@ -109,6 +150,18 @@ class TrainConfig:
     smoothing_loss_weight: float = 0.15  # MS-TCN truncated-MSE flicker penalty, see model.py
     device: str = "cpu"
     num_threads: int = 4  # this dev box has 4 cores; torch defaults to fewer, see train.py
+
+    def __post_init__(self) -> None:
+        if self.epochs <= 0:
+            raise ValueError(f"epochs must be positive, got {self.epochs}")
+        if self.lr <= 0:
+            raise ValueError(f"lr must be positive, got {self.lr}")
+        if self.batch_size <= 0:
+            raise ValueError(f"batch_size must be positive, got {self.batch_size}")
+        if self.smoothing_loss_weight < 0:
+            raise ValueError(f"smoothing_loss_weight must be non-negative, got {self.smoothing_loss_weight}")
+        if self.num_threads <= 0:
+            raise ValueError(f"num_threads must be positive, got {self.num_threads}")
 
 
 @dataclass
@@ -128,6 +181,21 @@ class EvalConfig:
     false_positive_cost: float = 2.0  # cost of a spurious phase-start alert
     false_negative_cost: float = 1.0  # cost of a late/missed phase-start alert
     use_viterbi: bool = False  # off by default: non-causal, worse fit for the online story
+
+    def __post_init__(self) -> None:
+        if not self.iou_thresholds or any(not (0.0 < t <= 1.0) for t in self.iou_thresholds):
+            raise ValueError(f"iou_thresholds must be non-empty with all values in (0, 1], got {self.iou_thresholds}")
+        if self.majority_filter_window < 1:
+            raise ValueError(f"majority_filter_window must be >= 1, got {self.majority_filter_window}")
+        missing = set(PHASE_LABELS) - set(self.min_duration_frames)
+        if missing:
+            raise ValueError(f"min_duration_frames is missing entries for classes: {sorted(missing)}")
+        if any(v <= 0 for v in self.min_duration_frames.values()):
+            raise ValueError(f"min_duration_frames values must all be positive, got {self.min_duration_frames}")
+        if self.hysteresis_frames < 1:
+            raise ValueError(f"hysteresis_frames must be >= 1, got {self.hysteresis_frames}")
+        if self.false_positive_cost < 0 or self.false_negative_cost < 0:
+            raise ValueError("false_positive_cost and false_negative_cost must be non-negative")
 
 
 @dataclass

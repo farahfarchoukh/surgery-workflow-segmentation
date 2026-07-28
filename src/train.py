@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 import torch
@@ -78,7 +79,22 @@ def train(cfg: ExperimentConfig, output_path: Path) -> PhaseSegmentationModel:
     print(f"training finished in {elapsed:.1f}s on CPU")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"model_state": model.state_dict(), "config": cfg}, output_path)
+    # Deliberately NOT pickling `cfg` (an ExperimentConfig dataclass) into the
+    # checkpoint: torch.load can only skip its weights_only safety check for
+    # a small allowlist of built-in types (tensors, dict/list/str/int/float),
+    # not arbitrary custom classes. A checkpoint is exactly the kind of file
+    # that ends up shared/downloaded, so keeping it loadable in the safe
+    # (weights_only=True) mode matters - see evaluate.load_model. Only
+    # plain-JSON-safe architecture metadata is stored; hyperparameters live
+    # in config/default.yaml (or whichever --config produced this run), which
+    # the caller already has.
+    checkpoint = {
+        "model_state": model.state_dict(),
+        "model_config": asdict(cfg.model),
+        "feature_dim": cfg.data.feature_dim,
+        "num_classes": NUM_CLASSES,
+    }
+    torch.save(checkpoint, output_path)
     print(f"checkpoint saved to {output_path}")
     return model
 
