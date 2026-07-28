@@ -245,3 +245,42 @@ def compute_loss(all_stage_logits: list[torch.Tensor], labels: torch.Tensor, smo
 
 def count_params(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
+
+
+def _stack_receptive_field(kernel_size: int, num_layers: int) -> int:
+    """Receptive field (in frames) of one dual-dilated stack, in terms of
+    how many of ITS OWN input frames its output at time t depends on.
+
+    Each residual layer l (0-indexed) runs two causal branches in parallel
+    on the SAME input - dilation d_a=2^l (grows with depth) and
+    d_b=2^(L-1-l) (shrinks with depth) - then concatenates/merges them. The
+    branches don't chain within a layer, so a layer's own contribution to
+    the receptive field is governed by whichever branch has the LARGER
+    dilation at that depth: (kernel_size - 1) * max(d_a, d_b). Layers DO
+    chain across the stack (each layer's output feeds the next), so their
+    per-layer contributions sum. +1 for the single frame at zero look-back.
+    """
+    total = 1
+    for l in range(num_layers):
+        dilation_a = 2**l
+        dilation_b = 2 ** (num_layers - 1 - l)
+        total += (kernel_size - 1) * max(dilation_a, dilation_b)
+    return total
+
+
+def compute_receptive_field_frames(model_cfg: ModelConfig) -> int:
+    """Total receptive field of the full multi-stage model, in frames of
+    ITS INPUT (the fused per-camera sequence - see report Sec 4.2.2 for the
+    "how many seconds of history can the model see" framing this feeds).
+
+    Stages COMPOSE, not just add: stage 2 depends on RF_2 frames of stage
+    1's OUTPUT, and each of those frames itself already depends on RF_1
+    frames of the original input. Composing two causal receptive fields of
+    size RF_a and RF_b gives RF_a + RF_b - 1 (the shared boundary frame is
+    not double-counted) - this repeats across every refinement stage.
+    """
+    total = _stack_receptive_field(model_cfg.kernel_size, model_cfg.stage1_layers)
+    for _ in range(model_cfg.num_refine_stages):
+        stage_rf = _stack_receptive_field(model_cfg.kernel_size, model_cfg.refine_layers)
+        total = total + stage_rf - 1
+    return total

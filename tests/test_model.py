@@ -5,7 +5,7 @@ safety net (never let softmax attention over cameras go all -inf)."""
 import torch
 
 from src.config import NUM_CLASSES, ModelConfig
-from src.model import CameraFusion, PhaseSegmentationModel, count_params
+from src.model import CameraFusion, PhaseSegmentationModel, compute_receptive_field_frames, count_params
 
 
 def tiny_model_config(**overrides) -> ModelConfig:
@@ -58,6 +58,48 @@ def test_causality_future_frames_do_not_affect_past_outputs():
         out2 = model(perturbed, camera_mask)[-1]
 
     assert torch.equal(out1[:, :cutoff, :], out2[:, :cutoff, :])
+
+
+def test_receptive_field_formula_matches_empirical_behavior():
+    """compute_receptive_field_frames is a claim about exactly how many
+    input frames the model's output at time t depends on - don't just trust
+    the arithmetic, find the TRUE farthest-back position that still affects
+    output[query_t] and assert it matches the formula exactly.
+
+    Deliberately a LINEAR scan, not a binary search: a first version of
+    this test used binary search and got a wrong (too-small) empirical
+    answer, because a dilated conv's dependency on its input is a SPARSE
+    comb of positions {t, t-d, t-2d, ...}, not a contiguous range - the
+    "does perturbing position p change the output" property is NOT
+    monotonic in p, so binary search silently converges to the wrong
+    boundary. A full scan has no such assumption to violate."""
+    cfg = tiny_model_config()
+    feature_dim = 8
+    rf = compute_receptive_field_frames(cfg)
+
+    seq_len = rf + 30
+    query_t = rf + 15  # comfortably inside the sequence with margin on both sides
+    model = PhaseSegmentationModel(cfg, feature_dim, NUM_CLASSES)
+    model.eval()
+
+    torch.manual_seed(0)
+    features = torch.randn(1, 2, seq_len, feature_dim)
+    camera_mask = torch.ones(1, 2, seq_len)
+
+    with torch.no_grad():
+        baseline = model(features, camera_mask)[-1][0, query_t]
+
+    farthest_affecting_offset = None
+    for offset in range(0, rf + 5):  # small margin past the claimed RF to also catch a formula UNDER-count
+        perturbed = features.clone()
+        perturbed[:, :, query_t - offset, :] += 5.0
+        with torch.no_grad():
+            out = model(perturbed, camera_mask)[-1][0, query_t]
+        if not torch.equal(out, baseline):
+            farthest_affecting_offset = offset
+
+    empirical_rf = farthest_affecting_offset + 1
+    assert empirical_rf == rf, f"formula says RF={rf} but empirical farthest-affecting offset gives RF={empirical_rf}"
 
 
 def test_view_dropout_never_drops_every_camera():
