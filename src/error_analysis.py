@@ -71,16 +71,19 @@ def inject_occlusion_noise(
     mask_frames = case.labels == operation_idx
     num_frames = int(mask_frames.sum().item())
     if num_frames == 0:
-        return SyntheticCase(features=features, camera_mask=case.camera_mask, labels=case.labels)
+        return SyntheticCase(
+            features=features, camera_mask=case.camera_mask, labels=case.labels, num_cameras=case.num_cameras
+        )
 
-    num_real_cameras = int(case.camera_mask.sum().item())
-    for cam in range(num_real_cameras):
+    for cam in range(case.num_cameras):
         if rng.random() < camera_dropout_prob:
             features[cam, mask_frames, :] = 0.0  # camera fully blocked during operation
         else:
             noise = rng.normal(0.0, severity, size=(num_frames, feature_dim)).astype(np.float32)
             features[cam, mask_frames, :] += torch.from_numpy(noise)  # partial occlusion / motion blur
-    return SyntheticCase(features=features, camera_mask=case.camera_mask, labels=case.labels)
+    return SyntheticCase(
+        features=features, camera_mask=case.camera_mask, labels=case.labels, num_cameras=case.num_cameras
+    )
 
 
 def inject_background_jitter(
@@ -95,19 +98,20 @@ def inject_background_jitter(
     pp_idx = PHASE_LABELS.index("patient_present")
     neighbor_idx = PHASE_LABELS.index("preparation")
     proto_neighbor = torch.from_numpy(prototypes[neighbor_idx].astype(np.float32))
-    num_real_cameras = int(case.camera_mask.sum().item())
 
     t, seq_len = 0, len(labels_np)
     while t < seq_len:
         if labels_np[t] == pp_idx and rng.random() < flip_prob:
             end = min(t + burst_len, seq_len)
-            for cam in range(num_real_cameras):
+            for cam in range(case.num_cameras):
                 noise = rng.normal(0.0, 1.0, size=(end - t, proto_neighbor.shape[0])).astype(np.float32)
                 features[cam, t:end, :] = proto_neighbor + torch.from_numpy(noise)
             t = end
         else:
             t += 1
-    return SyntheticCase(features=features, camera_mask=case.camera_mask, labels=case.labels)
+    return SyntheticCase(
+        features=features, camera_mask=case.camera_mask, labels=case.labels, num_cameras=case.num_cameras
+    )
 
 
 def analyze_case(model, case: SyntheticCase, cfg: ExperimentConfig, allowed: np.ndarray) -> dict:

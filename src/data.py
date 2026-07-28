@@ -27,6 +27,20 @@ real-world-necessary but adds complexity orthogonal to what this prototype
 is meant to demonstrate; camera-axis padding (1-3 real cameras vs.
 max_cameras) is kept, via `camera_mask`, because that IS the multi-view
 occlusion problem the assignment asks the model to handle.
+
+Synchronization: each case's clean per-frame features are treated as the
+ground truth a perfectly-synced capture would produce, then EACH real
+camera is independently passed through src.sync's jitter/frame-loss
+simulation and re-aligned onto the nominal frame grid via
+`sync.synchronize_streams`. `camera_mask` is therefore PER-TIMESTEP
+([max_cameras, seq_len], not just [max_cameras]) - a camera can be present
+in the case overall but missing at specific frames because its raw sample
+fell outside the synchronization tolerance window or was dropped entirely.
+`SyntheticCase.num_cameras` separately records how many camera slots are
+physically installed in this case (used by anything that needs to iterate
+"the real cameras", e.g. error_analysis.py's per-camera corruption loop) -
+kept distinct from the mask because "equipped" and "has data this instant"
+are different facts.
 """
 
 from __future__ import annotations
@@ -38,6 +52,7 @@ import torch
 from torch.utils.data import Dataset
 
 from src.config import NUM_CLASSES, DataConfig
+from src.sync import generate_jittered_camera_stream, synchronize_streams
 
 
 def generate_class_prototypes(feature_dim: int, seed: int) -> np.ndarray:
@@ -53,8 +68,9 @@ def generate_class_prototypes(feature_dim: int, seed: int) -> np.ndarray:
 @dataclass
 class SyntheticCase:
     features: torch.Tensor  # [max_cameras, seq_len, feature_dim], float32
-    camera_mask: torch.Tensor  # [max_cameras], 1.0 = real camera, 0.0 = absent/occluded-out
+    camera_mask: torch.Tensor  # [max_cameras, seq_len], 1.0 = camera had a synced sample at this frame
     labels: torch.Tensor  # [seq_len], int64 class indices
+    num_cameras: int  # how many camera slots are physically installed in this case (<= max_cameras)
 
 
 class SyntheticSurgeryGenerator:
@@ -100,8 +116,6 @@ class SyntheticSurgeryGenerator:
         )
         assert labels_np.shape[0] == cfg.seq_len, "segment lengths must sum to seq_len exactly"
 
-        features = np.zeros((cfg.max_cameras, cfg.seq_len, cfg.feature_dim), dtype=np.float32)
-
         # Cross-camera correlated noise: one noise trajectory shared by
         # every camera in this case (scene-level nuisance - lighting,
         # ambient motion - all cameras observe together), distinct from
@@ -109,20 +123,38 @@ class SyntheticSurgeryGenerator:
         shared_noise = rng.normal(0.0, cfg.cross_camera_noise_std, size=(cfg.seq_len, cfg.feature_dim))
         class_signal = self.prototypes[labels_np]  # [seq_len, feature_dim]
 
+        # Nominal capture grid this case's cameras are notionally aligned to
+        # (see DataConfig.seconds_per_frame). Each real camera's true clean
+        # signal at this grid is what a perfectly-synced capture would
+        # produce; sync.py then simulates that camera's ACTUAL raw stream
+        # (jittered timestamps, occasional dropped frames) and realigns it,
+        # which is where camera_mask's per-timestep 0s actually come from.
+        nominal_timestamps = np.arange(cfg.seq_len, dtype=np.float64) * cfg.seconds_per_frame
+
+        features = np.zeros((cfg.max_cameras, cfg.seq_len, cfg.feature_dim), dtype=np.float32)
+        camera_mask = np.zeros((cfg.max_cameras, cfg.seq_len), dtype=np.float32)
+
         for cam in range(num_cameras):
             per_camera_noise = rng.normal(0.0, cfg.feature_noise_std, size=(cfg.seq_len, cfg.feature_dim))
-            features[cam] = class_signal + shared_noise + per_camera_noise
-        # Cameras beyond num_cameras stay all-zero and are excluded via
-        # camera_mask - the fusion layer in model.py must never rely on
-        # their (meaningless) zero values, only on the mask.
+            clean_signal = (class_signal + shared_noise + per_camera_noise).astype(np.float32)
 
-        camera_mask = np.zeros(cfg.max_cameras, dtype=np.float32)
-        camera_mask[:num_cameras] = 1.0
+            raw_stream = generate_jittered_camera_stream(
+                nominal_timestamps, clean_signal, cfg.camera_jitter_std_seconds, cfg.camera_frame_drop_prob, rng
+            )
+            aligned, available = synchronize_streams(
+                [raw_stream], nominal_timestamps, cfg.sync_tolerance_seconds, cfg.feature_dim
+            )
+            features[cam] = aligned[0]
+            camera_mask[cam] = available[0]
+        # Cameras beyond num_cameras stay all-zero/unavailable - the fusion
+        # layer in model.py must never rely on their (meaningless) zero
+        # values, only on camera_mask.
 
         return SyntheticCase(
             features=torch.from_numpy(features),
             camera_mask=torch.from_numpy(camera_mask),
             labels=torch.from_numpy(labels_np),
+            num_cameras=num_cameras,
         )
 
 
@@ -154,4 +186,5 @@ def collate_cases(batch: list[SyntheticCase]) -> dict[str, torch.Tensor]:
         "features": torch.stack([c.features for c in batch]),
         "camera_mask": torch.stack([c.camera_mask for c in batch]),
         "labels": torch.stack([c.labels for c in batch]),
+        "num_cameras": torch.tensor([c.num_cameras for c in batch], dtype=torch.long),
     }

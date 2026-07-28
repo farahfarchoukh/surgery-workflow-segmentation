@@ -87,6 +87,12 @@ class DataConfig:
     seconds_per_frame: float = 10.0  # low-Hz feature extraction, see report Sec 4.2.2
     num_train_sequences: int = 32
     num_val_sequences: int = 8
+    # Multi-camera synchronization (src/sync.py): each camera's raw stream is
+    # independently jittered and lossy before the alignment layer recovers a
+    # per-timestep availability mask - see sync.py's module docstring.
+    camera_jitter_std_seconds: float = 3.0  # ~0.3x seconds_per_frame: clock drift / encode+network latency
+    camera_frame_drop_prob: float = 0.05  # per-frame packet loss / decode failure rate, independent per camera
+    sync_tolerance_seconds: float = 5.0  # ~0.5x seconds_per_frame: matches the report's "nearest frame within tolerance" design
 
     def __post_init__(self) -> None:
         if self.feature_dim <= 0:
@@ -112,6 +118,12 @@ class DataConfig:
             raise ValueError(f"seconds_per_frame must be positive, got {self.seconds_per_frame}")
         if self.num_train_sequences <= 0 or self.num_val_sequences <= 0:
             raise ValueError("num_train_sequences and num_val_sequences must be positive")
+        if self.camera_jitter_std_seconds < 0:
+            raise ValueError(f"camera_jitter_std_seconds must be non-negative, got {self.camera_jitter_std_seconds}")
+        if not (0.0 <= self.camera_frame_drop_prob < 1.0):
+            raise ValueError(f"camera_frame_drop_prob must be in [0, 1), got {self.camera_frame_drop_prob}")
+        if self.sync_tolerance_seconds <= 0:
+            raise ValueError(f"sync_tolerance_seconds must be positive, got {self.sync_tolerance_seconds}")
 
 
 @dataclass

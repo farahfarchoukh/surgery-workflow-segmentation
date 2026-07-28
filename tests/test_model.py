@@ -20,8 +20,8 @@ def test_forward_pass_shapes_for_each_camera_count():
     model.eval()
     for num_cameras in (1, 2, 3):
         features = torch.randn(2, 3, seq_len, feature_dim)
-        camera_mask = torch.zeros(2, 3)
-        camera_mask[:, :num_cameras] = 1.0
+        camera_mask = torch.zeros(2, 3, seq_len)  # per-timestep, see src/sync.py
+        camera_mask[:, :num_cameras, :] = 1.0
         with torch.no_grad():
             all_logits = model(features, camera_mask)
         assert len(all_logits) == tiny_model_config().num_refine_stages + 1
@@ -47,7 +47,7 @@ def test_causality_future_frames_do_not_affect_past_outputs():
     model.eval()
 
     features = torch.randn(1, 2, seq_len, feature_dim)
-    camera_mask = torch.tensor([[1.0, 1.0, 0.0]])[:, :2]
+    camera_mask = torch.ones(1, 2, seq_len)
 
     with torch.no_grad():
         out1 = model(features, camera_mask)[-1]
@@ -68,9 +68,31 @@ def test_view_dropout_never_drops_every_camera():
     fusion = CameraFusion(feature_dim=8, fusion_dim=8, view_dropout_prob=1.0)
     fusion.train()
     features = torch.randn(4, 3, 5, 8)
-    camera_mask = torch.ones(4, 3)
+    camera_mask = torch.ones(4, 3, 5)
     out = fusion(features, camera_mask)
     assert torch.isfinite(out).all()
+
+
+def test_fusion_handles_fully_missing_timestep():
+    """A real, not hypothetical, edge case with per-timestep sync masks
+    (src/sync.py): every camera can genuinely lack data at the same instant
+    (independent per-camera sync losses coinciding, or a single-camera case
+    hitting one dropped frame). Without the fully-missing-timestep fallback
+    in CameraFusion.forward, softmax over an all -inf row at that position
+    would produce NaN and poison every downstream timestep through the
+    causal convolutions."""
+    torch.manual_seed(0)
+    fusion = CameraFusion(feature_dim=8, fusion_dim=8, view_dropout_prob=0.0)
+    fusion.eval()
+    features = torch.randn(2, 3, 5, 8)
+    camera_mask = torch.ones(2, 3, 5)
+    camera_mask[0, :, 2] = 0.0  # every camera missing at t=2, batch item 0 only
+    out = fusion(features, camera_mask)
+    assert torch.isfinite(out).all()
+    # unaffected timesteps/batch items should be untouched by the fallback
+    camera_mask_all_ones = torch.ones(2, 3, 5)
+    out_baseline = fusion(features, camera_mask_all_ones)
+    assert torch.equal(out[1], out_baseline[1])  # batch item 1 had no missing timestep
 
 
 def test_eval_mode_fusion_is_deterministic():
@@ -80,7 +102,7 @@ def test_eval_mode_fusion_is_deterministic():
     fusion = CameraFusion(feature_dim=8, fusion_dim=8, view_dropout_prob=0.9)
     fusion.eval()
     features = torch.randn(2, 3, 5, 8)
-    camera_mask = torch.tensor([[1.0, 1.0, 0.0], [1.0, 1.0, 1.0]])
+    camera_mask = torch.tensor([[1.0, 1.0, 0.0], [1.0, 1.0, 1.0]]).unsqueeze(-1).expand(2, 3, 5).contiguous()
     out1 = fusion(features, camera_mask)
     out2 = fusion(features, camera_mask)
     assert torch.equal(out1, out2)

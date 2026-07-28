@@ -51,7 +51,14 @@ from src.config import ModelConfig
 
 class CameraFusion(nn.Module):
     """Shared per-camera projection + attention-weighted pooling across the
-    camera axis, robust to missing/occluded views via view-dropout training."""
+    camera axis, robust to missing/occluded views via view-dropout training.
+
+    camera_mask is PER-TIMESTEP ([B, C, T], see src/sync.py and data.py):
+    a camera can be equipped for a case but missing at specific frames
+    because its raw sample fell outside the synchronization tolerance
+    window or was dropped in transit - this is a materially different (and
+    more realistic) failure mode than "camera absent for the whole case,"
+    and the fusion layer has to be robust to both."""
 
     def __init__(self, feature_dim: int, fusion_dim: int, view_dropout_prob: float):
         super().__init__()
@@ -65,22 +72,42 @@ class CameraFusion(nn.Module):
         self.view_dropout_prob = view_dropout_prob
 
     def forward(self, features: torch.Tensor, camera_mask: torch.Tensor) -> torch.Tensor:
-        """features: [B, C, T, feature_dim], camera_mask: [B, C] (1=real camera).
-        Returns fused: [B, T, fusion_dim]."""
+        """features: [B, C, T, feature_dim], camera_mask: [B, C, T] (1=camera
+        has a synced sample at this frame). Returns fused: [B, T, fusion_dim]."""
         proj_feats = self.proj(features)  # [B, C, T, fusion_dim]
 
         effective_mask = camera_mask
         if self.training and self.view_dropout_prob > 0:
-            drop = (torch.rand_like(camera_mask) < self.view_dropout_prob).float()
-            candidate_mask = camera_mask * (1.0 - drop)
-            # Never drop every camera for a case - camera_mask always has
-            # >=1 real camera (min_cameras=1), so if dropout would zero all
-            # of them, fall back to the undropped mask for that case only.
-            all_dropped = candidate_mask.sum(dim=1) == 0
-            effective_mask = torch.where(all_dropped.unsqueeze(1).expand_as(camera_mask), camera_mask, candidate_mask)
+            # View-dropout is a WHOLE-CASE augmentation (drop a camera for
+            # the entire sequence, simulating extended occlusion), sampled
+            # once per (batch, camera) and broadcast across T - distinct
+            # from the per-timestep sync mask above, which already varies
+            # over T on its own. The two compose multiplicatively.
+            drop = (torch.rand(camera_mask.shape[0], camera_mask.shape[1], device=camera_mask.device) < self.view_dropout_prob)
+            candidate_mask = camera_mask * (~drop).float().unsqueeze(-1)
+            # Never let dropout zero out every camera at a timestep that
+            # still had real sync'd data - check per (batch, time), not
+            # just per (batch, case), since availability already varies
+            # over time before dropout is even applied.
+            all_dropped_t = candidate_mask.sum(dim=1, keepdim=True) == 0  # [B, 1, T]
+            effective_mask = torch.where(all_dropped_t.expand_as(camera_mask), camera_mask, candidate_mask)
+
+        # Rare edge case (real, not hypothetical - see test_fusion_handles_
+        # fully_missing_timestep): every camera can genuinely be unavailable
+        # at the same instant (independent per-camera sync losses lining up,
+        # or - pre-dropout - a case with only 1 equipped camera hitting a
+        # dropped frame). masked_fill with an all -inf row would soften to
+        # softmax(all -inf) = NaN. At those specific (b, t) positions only,
+        # skip masking: every camera's projected feature is identically
+        # proj(zero-vector) = the linear layer's bias term there anyway (see
+        # data.py's "absent -> zero features" convention), so an unmasked
+        # softmax over identical entries is a well-defined, benign "no
+        # observation this instant" output, not garbage.
+        fully_missing = effective_mask.sum(dim=1, keepdim=True) == 0  # [B, 1, T]
+        mask_for_fill = torch.where(fully_missing.expand_as(effective_mask), torch.ones_like(effective_mask), effective_mask)
 
         scores = torch.einsum("bctf,f->bct", proj_feats, self.query) / (self.fusion_dim**0.5)
-        scores = scores.masked_fill(effective_mask.unsqueeze(-1) == 0, float("-inf"))
+        scores = scores.masked_fill(mask_for_fill == 0, float("-inf"))
         attn = torch.softmax(scores, dim=1)  # softmax over the camera axis
         fused = torch.einsum("bct,bctf->btf", attn, proj_feats)
         return fused
@@ -171,7 +198,7 @@ class PhaseSegmentationModel(nn.Module):
         )
 
     def forward(self, features: torch.Tensor, camera_mask: torch.Tensor) -> list[torch.Tensor]:
-        """features: [B, C, T, feature_dim], camera_mask: [B, C].
+        """features: [B, C, T, feature_dim], camera_mask: [B, C, T].
         Returns a list of per-stage logits, each [B, T, num_classes]
         (time-major - the shape postprocess.py and metrics.py expect)."""
         fused = self.fusion(features, camera_mask)  # [B, T, fusion_dim]
