@@ -1,0 +1,54 @@
+# Single reproducibility artifact for this repo. Every number reported in
+# outputs/ or in the technical architecture report should be traceable back
+# to this file's committed values (or an explicitly diffed override).
+#
+# Only fields that differ from src/config.py's dataclass defaults need to be
+# listed here - ExperimentConfig.from_yaml() falls back to those defaults
+# for anything omitted. We list everything explicitly anyway so this file
+# is a complete, self-documenting record of "what ran."
+
+data:
+  seed: 42
+  feature_dim: 128
+  seq_len: 240
+  min_cameras: 1
+  max_cameras: 3
+  phase_duration_weights: [90.0, 70.0, 180.0, 60.0, 30.0]
+  phase_duration_gamma_shape: 8.0
+  feature_noise_std: 1.0
+  cross_camera_noise_std: 0.4
+  seconds_per_frame: 10.0
+  num_train_sequences: 32
+  num_val_sequences: 8
+
+model:
+  fusion_dim: 48
+  hidden_dim: 48
+  kernel_size: 3
+  stage1_layers: 6
+  refine_layers: 4
+  num_refine_stages: 2
+  dropout: 0.15
+  view_dropout_prob: 0.3
+
+train:
+  epochs: 20
+  lr: 0.001
+  batch_size: 8
+  smoothing_loss_weight: 0.15
+  device: cpu
+  num_threads: 4
+
+eval:
+  iou_thresholds: [0.10, 0.25, 0.50]
+  majority_filter_window: 9
+  min_duration_frames:
+    patient_present: 15
+    preparation: 10
+    operation: 15
+    closing: 10
+    patient_leave: 8
+  hysteresis_frames: 5
+  false_positive_cost: 2.0
+  false_negative_cost: 1.0
+  use_viterbi: false
