@@ -732,10 +732,17 @@ answering.
   synchronization), no config-composition framework (every dataclass
   validates its own invariants instead), a single `config/default.yaml`
   reproducibility artifact, checkpoints that never pickle arbitrary objects
-  (`weights_only=True`), and a 49-test suite (~6s) including
+  (`weights_only=True`), and a 59-test suite (~9s) including
   hand-computed known-answer checks for the metrics, a direct causality
-  proof, and an empirically-verified receptive-field calculation for the
-  model.
+  proof, an empirically-verified receptive-field calculation for the
+  model, and adversarial robustness tests (near-total sync loss,
+  sub-receptive-field sequences, corrupted checkpoints). Structured
+  logging, checkpoint backup rotation, a Dockerfile, and a GitHub Actions
+  CI workflow (lint + test + Docker build + report build) extend this past
+  the take-home's minimum ask - see the repository README's
+  production-readiness scope section for exactly what's been verified
+  running vs. written-but-unexecuted in this dev environment, stated
+  explicitly rather than implied.
 - **Architectural Depth** — the temporal model's dilation schedule,
   parameter budget (144,975, well under a self-imposed 500K cap), and exact
   receptive field (321 frames / 53.5 minutes, computed and empirically
