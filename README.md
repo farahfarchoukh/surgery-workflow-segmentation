@@ -335,40 +335,40 @@ guarantee that actually holds.
 ## Repository structure
 
 ```
-config/default.yaml             single reproducibility artifact - every
-                                reported number should trace back to this
-src/
-  config.py           dataclasses + YAML loader (with __post_init__
-                      validation), PHASE_LABELS, strict
-                      forward-only transition matrix
-  data.py             Ingestion & Feature Stubs (component 1)
-  sync.py             multi-camera timestamp jitter + frame-loss
-                      simulation and the synchronization/alignment
-                      layer that recovers a per-timestep mask
-  model.py            Temporal Classification Layer + multi-view
-                      fusion (component 2)
-  train.py            training loop + checkpoint backup rotation
-  postprocess.py      Segmentation Timeline Generator (component 3)
-  metrics.py          Dual Metric Stack (component 4)
-  evaluate.py         orchestrates data -> model -> postprocess -> metrics
-  error_analysis.py   Mock Error Analysis Script (component 5)
-  logging_config.py   structured logging setup, shared by every entrypoint
-  serve.py            local FastAPI serving demo (SageMaker-endpoint
-                      pattern) + /metrics Prometheus endpoint
-tests/                          66 tests, hand-computed known answers where it matters
-report/
-  technical_architecture_report.md   Deliverable 2 source
-  diagrams/aws_architecture.{mmd,png}
-  build_pdf.py                       pure-Python PDF export
-scripts/make_report_assets.py   renders the AWS diagram PNG
-MODEL_CARD.md                   intended use, limitations, training data, performance
-Dockerfile, .dockerignore       containerization (see Docker section above)
-.github/workflows/ci.yml        CI: lint, pre-commit check, test+coverage, pip-audit,
-                                pipeline smoke test, Docker build, report build
-.pre-commit-config.yaml         local git hooks (ruff check) - CI runs the same ones
-requirements.txt                runtime deps (abstract floors, incl. CVE-fix pins)
-requirements-lock.txt           exact pinned versions - what the Docker image installs
-requirements-dev.txt            + pip-audit/pytest-cov/pre-commit, kept out of the image
+surgery-workflow-segmentation/
+├── config/
+│   └── default.yaml                      single reproducibility artifact - every reported
+│                                         number should trace back to this
+├── src/
+│   ├── config.py                         dataclasses + YAML loader (__post_init__ validation),
+│   │                                     PHASE_LABELS, strict forward-only transition matrix
+│   ├── data.py                           Ingestion & Feature Stubs (component 1)
+│   ├── sync.py                           multi-camera timestamp jitter + frame-loss simulation,
+│   │                                     the synchronization/alignment layer -> per-timestep mask
+│   ├── model.py                          Temporal Classification Layer + multi-view fusion (component 2)
+│   ├── train.py                          training loop + checkpoint backup rotation
+│   ├── postprocess.py                    Segmentation Timeline Generator (component 3)
+│   ├── metrics.py                        Dual Metric Stack (component 4)
+│   ├── evaluate.py                       orchestrates data -> model -> postprocess -> metrics
+│   ├── error_analysis.py                 Mock Error Analysis Script (component 5)
+│   ├── logging_config.py                 structured logging setup, shared by every entrypoint
+│   └── serve.py                          local FastAPI serving demo (SageMaker-endpoint pattern)
+│                                         + /metrics Prometheus endpoint
+├── tests/                                66 tests, hand-computed known answers where it matters
+├── report/
+│   ├── technical_architecture_report.md  Deliverable 2 source
+│   ├── diagrams/aws_architecture.{mmd,png}
+│   └── build_pdf.py                      pure-Python PDF export
+├── scripts/
+│   └── make_report_assets.py             renders the AWS diagram PNG
+├── MODEL_CARD.md                         intended use, limitations, training data, performance
+├── Dockerfile, .dockerignore             containerization (see Docker section above)
+├── .github/workflows/ci.yml              CI: lint, pre-commit check, test+coverage, pip-audit,
+│                                         pipeline smoke test, Docker build, report build
+├── .pre-commit-config.yaml               local git hooks (ruff check) - CI runs the same ones
+├── requirements.txt                      runtime deps (abstract floors, incl. CVE-fix pins)
+├── requirements-lock.txt                 exact pinned versions - what the Docker image installs
+└── requirements-dev.txt                  + pip-audit/pytest-cov/pre-commit, kept out of the image
 ```
 
 ## Design choices worth flagging
