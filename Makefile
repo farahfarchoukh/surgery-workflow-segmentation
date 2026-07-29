@@ -11,14 +11,24 @@ PY := .venv/bin/python
 bootstrap:
 	@command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
 	uv venv --python 3.12
-	uv pip install --index-strategy unsafe-best-match -r requirements-lock.txt
+	# --extra-index-url: requirements-lock.txt (uv pip freeze output) drops the
+	# pragma requirements.txt carries, so torch==...+cpu can't resolve from PyPI
+	# alone - identical reasoning to the Dockerfile/CI install steps, see
+	# their comments. This was missing here until a genuine fresh-clone test
+	# caught it - every prior verification reused a venv/cache that had
+	# already resolved torch once, masking the bug.
+	uv pip install --index-strategy unsafe-best-match \
+		--extra-index-url https://download.pytorch.org/whl/cpu \
+		-r requirements-lock.txt
 	@echo "bootstrap complete - activate with: source .venv/bin/activate"
 
 # Adds pip-audit/pytest-cov/pre-commit on top of bootstrap - kept separate
 # so the Docker image (built from requirements-lock.txt alone) never
 # carries these dev-only tools. See requirements-dev.txt.
 bootstrap-dev: bootstrap
-	uv pip install -r requirements-dev.txt
+	uv pip install --index-strategy unsafe-best-match \
+		--extra-index-url https://download.pytorch.org/whl/cpu \
+		-r requirements-dev.txt
 
 train:
 	$(PY) -m src.train
