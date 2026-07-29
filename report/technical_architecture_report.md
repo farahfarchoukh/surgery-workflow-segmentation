@@ -732,17 +732,19 @@ answering.
   synchronization), no config-composition framework (every dataclass
   validates its own invariants instead), a single `config/default.yaml`
   reproducibility artifact, checkpoints that never pickle arbitrary objects
-  (`weights_only=True`), and a 59-test suite (~9s) including
-  hand-computed known-answer checks for the metrics, a direct causality
-  proof, an empirically-verified receptive-field calculation for the
-  model, and adversarial robustness tests (near-total sync loss,
-  sub-receptive-field sequences, corrupted checkpoints). Structured
-  logging, checkpoint backup rotation, a Dockerfile, and a GitHub Actions
-  CI workflow (lint + test + Docker build + report build) extend this past
-  the take-home's minimum ask - see the repository README's
-  production-readiness scope section for exactly what's been verified
-  running vs. written-but-unexecuted in this dev environment, stated
-  explicitly rather than implied.
+  (`weights_only=True`), and a 66-test suite including hand-computed
+  known-answer checks for the metrics, a direct causality proof, an
+  empirically-verified receptive-field calculation for the model, and
+  adversarial robustness tests (near-total sync loss, sub-receptive-field
+  sequences, corrupted checkpoints). Structured logging, checkpoint backup
+  rotation, a Dockerfile, a `/metrics` Prometheus endpoint wired to real
+  model-quality signals, pre-commit hooks, `pytest-cov` coverage reporting,
+  and a 4-job GitHub Actions CI pipeline (lint + pre-commit + test/coverage
+  + `pip-audit` dependency scan + Docker build + report build, all
+  verified green on a real runner) extend this past the take-home's
+  minimum ask - see the repository README's production-readiness scope
+  section for exactly what's been verified running vs. described as
+  architecture, stated explicitly rather than implied.
 - **Architectural Depth** — the temporal model's dilation schedule,
   parameter budget (144,975, well under a self-imposed 500K cap), and exact
   receptive field (321 frames / 53.5 minutes, computed and empirically

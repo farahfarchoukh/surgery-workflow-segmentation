@@ -58,6 +58,7 @@ relock:
 report:
 	$(PY) scripts/make_report_assets.py
 	$(PY) report/build_pdf.py
+	$(PY) report/build_readme.py
 
 serve:
 	$(PY) -m uvicorn src.serve:app --host 127.0.0.1 --port 8000
