@@ -162,11 +162,11 @@ timings will vary with your hardware).
 | **Python version** | 3.12 (provisioned automatically by `uv`, independent of your system Python — see [Environment note](#environment-note)) |
 | **Dependencies** | Pinned in `requirements.txt` (abstract) and `requirements-lock.txt` (exact versions actually installed, via `uv pip freeze`) |
 | **Installation** | `make bootstrap` (no sudo/root required — see below) |
-| **Run tests** | `make test` → `66 tests, ~2 min with coverage instrumentation, fully deterministic` |
-| **Train** | `make train` → writes `outputs/checkpoint.pt` |
+| **Run tests** | `make test` → `66 tests, ~15-30s, fully deterministic` (`make coverage` runs the same suite with instrumentation, ~2 min) |
+| **Train** | `make train` → writes `outputs/checkpoint.pt` and `outputs/training_history.json` |
 | **Evaluate** | `make evaluate` → writes `outputs/eval_report.json`, prints raw-vs-postprocessed comparison |
 | **Error analysis** | `make error-analysis` → writes `outputs/error_analysis_report.json`, prints per-class noisy-vs-clean breakdown |
-| **Expected runtime** | Train: **~30-35s** on a 4-core CPU. Eval/error-analysis: a few seconds each. Full test suite: **~5.5-7s** |
+| **Expected runtime** | Train: **~40-55s** on a 4-core CPU (validation now computed every epoch, not just every 5th - see `report/diagrams/training_curves.png`). Eval/error-analysis: a few seconds each. Full test suite: **~15-30s** |
 | **Expected metrics** (`config/default.yaml` defaults) | Val frame accuracy **~99.4-99.6%**; error-analysis raw frame-accuracy delta **~-0.5 to -0.7** on `patient_present`/`operation` vs **~-0.01** on other classes (exact figures below) |
 | **Random seed** | `42` (`DataConfig.seed`, `config/default.yaml`) — every dataset split, weight init, and noise-injection RNG traces back to this one value via `src.config.set_seed` |
 | **CPU/GPU assumptions** | **CPU-only.** No GPU is used, expected, or required anywhere in this repo — `torch` is installed from the CPU wheel index (see `requirements.txt`), and `TrainConfig.device` is hardcoded `"cpu"`. Sized deliberately so training finishes in CPU-seconds |
@@ -186,7 +186,7 @@ git clone <this repo>
 cd surgery-workflow-segmentation
 make bootstrap        # uv venv (Python 3.12) + exactly the pinned lock, no sudo
 make test              # 66 tests
-make train              # ~30-35s CPU, writes outputs/checkpoint.pt
+make train              # ~40-55s CPU, writes outputs/checkpoint.pt
 make evaluate            # writes outputs/eval_report.json
 make error-analysis       # writes outputs/error_analysis_report.json
 make report                # writes report/technical_architecture_report.pdf
@@ -201,7 +201,7 @@ Every step after `bootstrap` reads `config/default.yaml` by default; pass
 ```bash
 make bootstrap      # uv-managed Python 3.12 venv + exactly the pinned lock (no sudo required)
 make bootstrap-dev  # + pip-audit/pytest-cov/pre-commit (dev/CI tools, kept out of the Docker image)
-make train          # ~30-35s on CPU: trains the temporal model on synthetic data
+make train          # ~40-55s on CPU: trains the temporal model on synthetic data
 make evaluate       # raw-vs-postprocessed metrics on the held-out validation split
 make error-analysis # noisy-vs-clean per-class breakdown - the "proof of understanding" script
 make test           # 66 tests, fully deterministic
@@ -527,7 +527,7 @@ each residual layer's two dilation branches (one growing, one shrinking with
 depth) target long static-phase context and rapid boundary precision
 *simultaneously*, and iterative multi-stage refinement is the mechanism that
 reduces over-segmentation. 144,975 parameters, trains to ~99.5% validation
-frame accuracy in ~30-35s on a 4-core CPU with no GPU. The model's exact
+frame accuracy in ~40-55s on a 4-core CPU with no GPU. The model's exact
 receptive field is *computed*, not eyeballed:
 `model.compute_receptive_field_frames` derives **321 frames (53.5 minutes**
 of real time at the assumed sampling cadence**)** for the default
@@ -540,6 +540,12 @@ output is bit-identical, and a second test exhaustively scans every input
 position to confirm the *computed* receptive field matches the model's
 *actual* behavior frame-for-frame (that test's docstring documents a real
 methodology bug caught along the way - see Sec 4.2.2).
+
+![Training loss and frame accuracy per epoch, real per-epoch history from `outputs/training_history.json`](report/diagrams/training_curves.png)
+
+*(Every epoch, not just the ones printed to console - `src/train.py` now
+records full history to `outputs/training_history.json`, regenerated via
+`make train` and rendered via `scripts/make_metrics_charts.py`.)*
 
 **1.3 Multi-view fusion.** Per-camera features pass through a shared linear
 projection, then an attention-weighted pooling layer combines the available
@@ -600,6 +606,12 @@ consequence for Proximie:
 | Fragmentation rate (predicted segment count per class) | How many spurious segments a class gets split into | Reliability proxy for OR analytics - a "patient_present" phase reported as 5 separate segments erodes trust in the whole system even if frame accuracy is high |
 | Cost-weighted FP/FN (false "operation started" vs. missed/late) | Asymmetric cost of spurious vs. missed alerts | A false "operation started" fires downstream automation prematurely (operationally disruptive, erodes trust); a late one just delays it - the cost weights encode that these are NOT equally bad |
 
+![Raw vs. postprocessed on the clean held-out validation split, all five model-quality metrics from the table above](report/diagrams/metrics_comparison.png)
+
+*(Near-ceiling on all five, as expected on synthetic data constructed to be
+learnable - see MODEL_CARD.md's "Performance characteristics" for why this
+number isn't the point. The measured delta from postprocessing on `patient_present`/`operation` under injected noise, below, is.)*
+
 ---
 
 #### Key finding: postprocessing recovers model error, but cannot fix it
@@ -621,18 +633,20 @@ Raw frame predictions            <- frame accuracy: -0.74 (patient_present), -0.
 Postprocessing (majority filter -> min-duration merge -> transition mask)
         |
         v
-Final timeline                    <- segmental F1@50: patient_present 0.000, operation 0.458 -> 0.875
+Final timeline                    <- segmental F1@50: patient_present 0.000, operation 0.333 -> 0.875
 ```
 
+![Per-class frame-accuracy degradation under injected noise (left), and segmental F1@50 raw-vs-postprocessed under noise per class (right) - the finding above, visualized](report/diagrams/error_analysis.png)
+
 - **`operation` recovers substantially**: raw noisy segmental F1@50 of
-  0.458 climbs to 0.875 after postprocessing - the majority filter and
+  0.333 climbs to 0.875 after postprocessing - the majority filter and
   min-duration merge successfully absorb the flicker occlusion causes,
   because the underlying frame-level signal, while damaged, still contains
   enough correct majority votes for the smoothing passes to reconstruct a
   clean segment.
 - **`patient_present` does NOT recover**: postprocessed F1@50 stays at
   0.000 even after the full pipeline. Predicted segment count confirms why
-  (clean=1.00, post-noisy=0.12 average segments per case) - severe
+  (clean=1.00, post-noisy=0.13 average segments per case) - severe
   background jitter pushes the model's prediction for that phase's *entire*
   duration toward the neighboring class from frame zero, not just a few
   scattered flickers. There is no majority signal left for postprocessing

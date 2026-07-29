@@ -128,9 +128,16 @@ jobs:
           # install step above - requirements.txt's CVE-fix floors need it.
           uv pip install --index-strategy unsafe-best-match -r requirements.txt
 
-      - name: Render diagram + build PDF
+      - name: Produce the pipeline outputs the charts are rendered from
+        run: |
+          .venv/bin/python -m src.train
+          .venv/bin/python -m src.evaluate
+          .venv/bin/python -m src.error_analysis
+
+      - name: Render diagrams + charts + build PDF
         run: |
           .venv/bin/python scripts/make_report_assets.py
+          .venv/bin/python scripts/make_metrics_charts.py
           .venv/bin/python report/build_pdf.py
 
       - name: Upload report PDF

@@ -83,15 +83,20 @@ From the most recent `make train && make evaluate` run against
 
 | Metric | Raw | Postprocessed |
 |---|---|---|
-| Frame accuracy | 0.994 | 0.990 |
+| Frame accuracy | 0.993 | 0.990 |
 | Edit score | 100.0 | 97.5 |
 | Segmental F1@10 | 1.000 | 0.986 |
 | Segmental F1@25 | 1.000 | 0.986 |
 | Segmental F1@50 | 1.000 | 0.986 |
-| Boundary latency (frames) | 0.1 | 0.1 |
+| Boundary latency (frames) | 0.125 | 0.125 |
 | Cost-weighted FP/FN total | 0.0 | 1.0 |
 
-Training: ~150-155s on a 4-core CPU, 20 epochs, no GPU. Exact numbers vary
+![Training curves and raw-vs-postprocessed metric comparison](report/diagrams/training_curves.png)
+![](report/diagrams/metrics_comparison.png)
+
+Training: ~40-45s on a 4-core CPU, 20 epochs, no GPU (validation is now
+computed every epoch, not just every 5th, for a complete training curve -
+see `report/diagrams/training_curves.png`). Exact numbers vary
 run-to-run within a small band because the synthetic dataset's camera
 counts and phase durations are themselves randomly sampled (seeded, but
 error-analysis's corruption injection draws additional fresh randomness on

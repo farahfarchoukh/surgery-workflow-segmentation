@@ -9,6 +9,7 @@ code on top.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import time
@@ -114,6 +115,13 @@ def train(cfg: ExperimentConfig, output_path: Path) -> PhaseSegmentationModel:
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.train.lr)
 
+    # Full per-epoch history, not just the epochs that get logged to console -
+    # this is what report/build_metrics_charts.py plots as an actual training
+    # curve. Val accuracy is computed every epoch too (the val set is 8
+    # sequences, negligible cost) rather than only at the log checkpoints, so
+    # the curve isn't artificially sparse.
+    history: list[dict] = []
+
     start = time.time()
     for epoch in range(1, cfg.train.epochs + 1):
         model.train()
@@ -139,19 +147,27 @@ def train(cfg: ExperimentConfig, output_path: Path) -> PhaseSegmentationModel:
             epoch_acc += frame_accuracy(all_logits[-1].detach(), batch["labels"])
             n_batches += 1
 
+        model.eval()
+        val_acc, val_batches = 0.0, 0
+        with torch.no_grad():
+            for batch in val_loader:
+                all_logits = model(batch["features"], batch["camera_mask"])
+                val_acc += frame_accuracy(all_logits[-1], batch["labels"])
+                val_batches += 1
+
+        train_loss = epoch_loss / n_batches
+        train_frame_acc = epoch_acc / n_batches
+        val_frame_acc = val_acc / val_batches
+        history.append(
+            {"epoch": epoch, "train_loss": train_loss, "train_frame_acc": train_frame_acc, "val_frame_acc": val_frame_acc}
+        )
+
         if epoch % 5 == 0 or epoch == 1 or epoch == cfg.train.epochs:
-            model.eval()
-            val_acc, val_batches = 0.0, 0
-            with torch.no_grad():
-                for batch in val_loader:
-                    all_logits = model(batch["features"], batch["camera_mask"])
-                    val_acc += frame_accuracy(all_logits[-1], batch["labels"])
-                    val_batches += 1
             msg = (
                 f"epoch {epoch:3d}/{cfg.train.epochs}  "
-                f"train_loss={epoch_loss / n_batches:.4f}  "
-                f"train_frame_acc={epoch_acc / n_batches:.3f}  "
-                f"val_frame_acc={val_acc / val_batches:.3f}"
+                f"train_loss={train_loss:.4f}  "
+                f"train_frame_acc={train_frame_acc:.3f}  "
+                f"val_frame_acc={val_frame_acc:.3f}"
             )
             print(msg)
             logger.info(msg)
@@ -159,6 +175,11 @@ def train(cfg: ExperimentConfig, output_path: Path) -> PhaseSegmentationModel:
     elapsed = time.time() - start
     print(f"training finished in {elapsed:.1f}s on CPU")
     logger.info("training finished in %.1fs", elapsed)
+
+    history_path = output_path.parent / "training_history.json"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    history_path.write_text(json.dumps({"config_seed": cfg.data.seed, "epochs": history}, indent=2))
+    logger.info("training history written to %s", history_path)
 
     # Deliberately NOT pickling `cfg` (an ExperimentConfig dataclass) into the
     # checkpoint: torch.load can only skip its weights_only safety check for

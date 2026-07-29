@@ -67,6 +67,7 @@ relock:
 
 report:
 	$(PY) scripts/make_report_assets.py
+	$(PY) scripts/make_metrics_charts.py
 	$(PY) report/build_pdf.py
 	$(PY) report/build_readme.py
 

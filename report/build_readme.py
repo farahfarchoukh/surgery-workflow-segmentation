@@ -35,16 +35,18 @@ def demote_headers(md_text: str) -> str:
     return re.sub(r"^(#{1,3})(\s)", r"#\1\2", md_text, flags=re.MULTILINE)
 
 
-def fix_relative_image_path(md_text: str) -> str:
-    # The source file's own image reference resolves relative to report/
+def fix_relative_image_paths(md_text: str) -> str:
+    # Every image reference in the source resolves relative to report/
     # (correct when GitHub renders technical_architecture_report.md
-    # directly); embedded in the repo-root README.md it needs the report/
-    # prefix to resolve to the same file.
-    return md_text.replace("(diagrams/aws_architecture.png)", "(report/diagrams/aws_architecture.png)")
+    # directly); embedded in the repo-root README.md they all need the
+    # report/ prefix to resolve to the same files. Matches any
+    # `(diagrams/...)` reference, not one hardcoded filename, since the
+    # report embeds multiple generated charts, not just the AWS diagram.
+    return re.sub(r"\(diagrams/", "(report/diagrams/", md_text)
 
 
 def build_readme_section() -> None:
-    embedded = fix_relative_image_path(demote_headers(SOURCE.read_text()))
+    embedded = fix_relative_image_paths(demote_headers(SOURCE.read_text()))
 
     readme_text = README.read_text()
     pattern = re.compile(re.escape(BEGIN_MARKER) + r".*?" + re.escape(END_MARKER), re.DOTALL)
