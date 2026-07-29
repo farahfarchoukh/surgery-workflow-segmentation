@@ -19,3 +19,13 @@ matplotlib>=3.9
 fastapi>=0.110
 uvicorn[standard]>=0.29
 httpx>=0.27  # test-only: FastAPI's in-process TestClient needs it
+prometheus-client>=0.20  # /metrics endpoint - see report Sec 4.4 Production Monitoring
+
+# Transitive-dependency floors, not used directly: xhtml2pdf/svglib/pyhanko pull in
+# old default versions of these with known CVEs (found via `pip-audit`, see CI's
+# security job). Pinned here so the resolver can't silently pick the vulnerable ones.
+idna>=3.7
+pillow>=12.3.0
+requests>=2.32.4
+setuptools>=78.1.1
+urllib3>=2.5.0

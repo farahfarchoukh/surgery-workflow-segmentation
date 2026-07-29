@@ -20,3 +20,18 @@ ignore = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.coverage.report]
+# Not gated at 100% - error_analysis.py's __main__ block and a few CLI
+# entry points are exercised manually (make train/evaluate), not under
+# pytest. The number is reported honestly in CI rather than hidden or
+# gamed with a fail-under threshold that would just get lowered later.
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]

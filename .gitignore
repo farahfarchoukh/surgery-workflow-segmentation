@@ -1,11 +1,15 @@
 __pycache__/
 *.pyc
 .venv/
+.venv-lock/
+.venv-relock/
 outputs/
 *.pt
 *.pdf
 .pytest_cache/
 .ruff_cache/
+.coverage
+coverage.xml
 *.egg-info/
 # pyproject.toml declares no [project.dependencies], so `uv run` treats this
 # as a zero-dependency project and writes a trivial, misleading lockfile.

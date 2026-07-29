@@ -1,0 +1,15 @@
+# Local git hooks running the same checks CI enforces (see .github/workflows/ci.yml's
+# "Pre-commit hooks" step, which runs `pre-commit run --all-files` to prove these
+# actually execute, not just that the config file parses).
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        # Explicit .venv path, not bare `ruff` on PATH: git invokes hooks in a
+        # shell that hasn't sourced `source .venv/bin/activate`, so PATH-based
+        # lookup fails even though the venv exists (caught by actually
+        # committing, not just by config existing - see README).
+        entry: .venv/bin/ruff check --force-exclude
+        language: system
+        types: [python]

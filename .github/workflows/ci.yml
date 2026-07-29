@@ -19,13 +19,22 @@ jobs:
       - name: Provision Python 3.12 + dependencies
         run: |
           uv venv --python 3.12
-          uv pip install -r requirements.txt
+          uv pip install -r requirements-dev.txt
 
       - name: Lint (ruff)
         run: .venv/bin/python -m ruff check .
 
-      - name: Run test suite
-        run: .venv/bin/python -m pytest -q
+      - name: Pre-commit hooks (same ruff checks, proves the hooks actually run)
+        run: .venv/bin/python -m pre_commit run --all-files --show-diff-on-failure
+
+      - name: Run test suite with coverage
+        run: .venv/bin/python -m pytest -q --cov=src --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
 
       - name: Smoke-test the full pipeline (train -> evaluate -> error-analysis)
         run: |
@@ -40,6 +49,28 @@ jobs:
           name: run-logs
           path: outputs/logs/
           if-no-files-found: ignore
+
+  security:
+    name: Dependency vulnerability scan (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Provision Python 3.12 + exactly the locked runtime dependencies
+        run: |
+          uv venv --python 3.12
+          # --index-strategy unsafe-best-match: some pinned CVE-fix versions (e.g. idna>=3.7)
+          # only exist on PyPI, not on the PyTorch CPU wheel index also listed in
+          # requirements-lock.txt - same reasoning as the Dockerfile's install step, see
+          # its comment for why a single-index default would fail to resolve these.
+          uv pip install --index-strategy unsafe-best-match -r requirements-lock.txt
+          uv pip install pip-audit
+
+      - name: Audit the exact dependency set the Docker image ships
+        run: .venv/bin/pip-audit
 
   docker:
     name: Docker build + smoke test

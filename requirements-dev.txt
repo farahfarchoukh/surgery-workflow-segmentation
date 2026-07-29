@@ -1,0 +1,8 @@
+# Dev/CI-only tooling - deliberately kept out of requirements.txt / requirements-lock.txt
+# so the Docker image (built from requirements-lock.txt) doesn't carry pre-commit's
+# git-hook machinery or pip-audit's vulnerability-DB client into the runtime container.
+-r requirements.txt
+
+pip-audit>=2.7   # dependency vulnerability scanning - run locally and in CI (see ci.yml)
+pytest-cov>=5.0  # test coverage measurement - see pyproject.toml [tool.coverage]
+pre-commit>=3.7  # local git hooks running the same ruff checks CI enforces

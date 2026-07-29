@@ -180,3 +180,55 @@ def test_request_under_size_limit_is_not_rejected_by_size_check(trained_checkpoi
     with TestClient(serve_module.app) as client:
         resp = client.post("/predict/synthetic", params={"seed": 1})
         assert resp.status_code != 413
+
+
+def test_metrics_endpoint_exposes_prometheus_format(missing_checkpoint):
+    """/metrics must work even with no model loaded - it's the same
+    "diagnostics shouldn't depend on the thing being diagnosed" contract
+    as /health (report Sec 4.4)."""
+    import src.serve as serve_module
+
+    with TestClient(serve_module.app) as client:
+        resp = client.get("/metrics")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/plain")
+        body = resp.text
+        assert "proximie_model_loaded" in body
+        assert "proximie_requests_total" in body
+        # model failed to load in this fixture, so the gauge must read 0, not just be present
+        assert "proximie_model_loaded 0.0" in body
+
+
+def test_metrics_counts_requests_by_endpoint_and_status(trained_checkpoint):
+    import src.serve as serve_module
+
+    with TestClient(serve_module.app) as client:
+        client.get("/health")
+        client.get("/health")
+        body = client.get("/metrics").text
+        assert 'proximie_requests_total{endpoint="/health",status="200"}' in body
+
+
+def test_metrics_records_prediction_quality_signals_after_a_prediction(trained_checkpoint):
+    """After a real prediction, the model-quality signals from report Sec 4.4
+    (confidence margin, segment fragmentation, per-camera availability) must
+    show up as observed histogram data, not just be registered with zero
+    observations - these are the metrics that catch a silently-wrong model
+    that /health's simple up/down check would miss entirely."""
+    import src.serve as serve_module
+
+    with TestClient(serve_module.app) as client:
+        predict_resp = client.post("/predict/synthetic", params={"seed": 2})
+        assert predict_resp.status_code == 200
+
+        body = client.get("/metrics").text
+        assert "proximie_prediction_confidence_count" in body
+        assert "proximie_predicted_segment_count_count" in body
+        assert "proximie_camera_availability_ratio_count" in body
+        assert "proximie_inference_latency_seconds_count" in body
+        # the confidence histogram must have accumulated at least one real
+        # observation (not just be present with 0 samples)
+        confidence_lines = [
+            line for line in body.splitlines() if line.startswith("proximie_prediction_confidence_count")
+        ]
+        assert confidence_lines and float(confidence_lines[0].split()[-1]) > 0

@@ -28,8 +28,9 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from pydantic import BaseModel, Field
 
 from src.config import PHASE_LABELS, ExperimentConfig, build_allowed_transition_matrix
@@ -46,6 +47,38 @@ CHECKPOINT_PATH = Path("outputs/checkpoint.pt")
 
 state: dict = {"model": None, "cfg": None, "generator": None, "allowed": None, "load_error": None}
 
+# Prometheus metrics - see report Sec 4.4 Production Monitoring. The two
+# "model/data quality" signals (confidence, fragmentation) are chosen
+# specifically because they're computable from a single request with no
+# ground truth, so they work in production, not just offline eval - the
+# same distinction Sec 1.5's key finding draws between "the model is up"
+# and "the model's output is still trustworthy."
+REQUESTS_TOTAL = Counter("proximie_requests_total", "Total HTTP requests handled", ["endpoint", "status"])
+MODEL_LOADED = Gauge("proximie_model_loaded", "1 if the model is loaded and serving, 0 if degraded")
+INFERENCE_LATENCY_SECONDS = Histogram(
+    "proximie_inference_latency_seconds", "Wall-clock time for the model forward pass, excluding HTTP overhead"
+)
+PREDICTION_CONFIDENCE = Histogram(
+    "proximie_prediction_confidence",
+    "Per-frame softmax margin (top1 - top2 probability) - sustained drop is the earliest "
+    "signal of the Sec 1.5 failure mode, before it shows up as a wrong segment",
+    buckets=(0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+)
+PREDICTED_SEGMENT_COUNT = Histogram(
+    "proximie_predicted_segment_count",
+    "Predicted segment count per case, per class - fragmentation proxy for whether "
+    "postprocessing is absorbing noise as intended (Sec 4.4)",
+    ["phase"],
+    buckets=(1, 2, 3, 5, 8, 13, 21, 34),
+)
+CAMERA_AVAILABILITY = Histogram(
+    "proximie_camera_availability_ratio",
+    "Fraction of frames in a request where a given camera index was available "
+    "(camera_mask==1) - production analog of the per-camera stream-health metric Sec 4.4 describes",
+    ["camera_index"],
+    buckets=(0.0, 0.25, 0.5, 0.75, 0.9, 0.99, 1.0),
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -57,6 +90,7 @@ async def lifespan(app: FastAPI):
         state["cfg"] = cfg
         state["generator"] = SyntheticSurgeryGenerator(cfg.data)
         state["allowed"] = build_allowed_transition_matrix()
+        MODEL_LOADED.set(1)
         logger.info("model loaded successfully")
     except (FileNotFoundError, CorruptedCheckpointError) as e:
         # Deliberately don't re-raise: a missing/corrupt checkpoint shouldn't
@@ -66,6 +100,7 @@ async def lifespan(app: FastAPI):
         # of just seeing a crash-looping container with no diagnostic.
         logger.error("model failed to load at startup: %s", e)
         state["load_error"] = str(e)
+        MODEL_LOADED.set(0)
     yield
     logger.info("server shutting down")
 
@@ -99,6 +134,9 @@ async def log_requests(request: Request, call_next):
     response = await call_next(request)
     elapsed_ms = (time.time() - start) * 1000
     logger.info("%s %s -> %d (%.1fms)", request.method, request.url.path, response.status_code, elapsed_ms)
+    # /metrics itself is excluded so scraping the endpoint doesn't inflate its own counter.
+    if request.url.path != "/metrics":
+        REQUESTS_TOTAL.labels(endpoint=request.url.path, status=str(response.status_code)).inc()
     return response
 
 
@@ -142,15 +180,41 @@ def _require_model() -> PhaseSegmentationModel:
     return state["model"]
 
 
+def _record_quality_metrics(logits_np: np.ndarray, segments: list, camera_mask: torch.Tensor) -> None:
+    # Softmax margin (top1 - top2 probability) per frame - cheap, ground-truth-free
+    # proxy for "is the model still confident," observed per-frame since there's no
+    # label cardinality cost (unlike per-camera/per-phase metrics below).
+    exp = np.exp(logits_np - logits_np.max(axis=-1, keepdims=True))
+    probs = exp / exp.sum(axis=-1, keepdims=True)
+    sorted_probs = np.sort(probs, axis=-1)
+    margins = sorted_probs[:, -1] - sorted_probs[:, -2]
+    for margin in margins:
+        PREDICTION_CONFIDENCE.observe(float(margin))
+
+    segment_counts_by_phase: dict[str, int] = {}
+    for seg in segments:
+        label = PHASE_LABELS[seg.label]
+        segment_counts_by_phase[label] = segment_counts_by_phase.get(label, 0) + 1
+    for phase, count in segment_counts_by_phase.items():
+        PREDICTED_SEGMENT_COUNT.labels(phase=phase).observe(count)
+
+    camera_mask_np = camera_mask.numpy()  # [cameras, frames]
+    for cam_idx in range(camera_mask_np.shape[0]):
+        CAMERA_AVAILABILITY.labels(camera_index=str(cam_idx)).observe(float(camera_mask_np[cam_idx].mean()))
+
+
 def _run_inference(features: torch.Tensor, camera_mask: torch.Tensor) -> PredictionResponse:
     model = _require_model()
     cfg: ExperimentConfig = state["cfg"]
+    inference_start = time.time()
     with torch.no_grad():
         logits = model(features.unsqueeze(0), camera_mask.unsqueeze(0))[-1][0]  # [T, C]
+    INFERENCE_LATENCY_SECONDS.observe(time.time() - inference_start)
     logits_np = logits.numpy()
 
     raw_labels_idx = logits_np.argmax(axis=-1)
     segments = generate_timeline(logits_np, cfg.eval, state["allowed"])
+    _record_quality_metrics(logits_np, segments, camera_mask)
 
     return PredictionResponse(
         num_frames=logits_np.shape[0],
@@ -185,8 +249,17 @@ def root() -> dict:
         "service": "Proximie OR Phase Segmentation - local serving demo",
         "note": "Local demonstration of the SageMaker Real-Time endpoint pattern (report Sec 4.3.1), "
         "not a deployed cloud service.",
-        "endpoints": ["/health", "/predict/synthetic (POST)", "/predict (POST)", "/docs"],
+        "endpoints": ["/health", "/predict/synthetic (POST)", "/predict (POST)", "/metrics", "/docs"],
     }
+
+
+@app.get("/metrics")
+def metrics() -> Response:
+    """Prometheus-format scrape endpoint - report Sec 4.4 Production Monitoring.
+    Infra metrics (request counts/status, inference latency) are always present;
+    model-quality metrics (confidence, fragmentation, camera availability) only
+    accumulate once at least one /predict* request has been served."""
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.post("/predict/synthetic", response_model=PredictionResponse)
