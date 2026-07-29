@@ -120,8 +120,19 @@ def test_structurally_malformed_checkpoint_raises_clear_error(tmp_path):
 
 def test_batch_chunking_does_not_change_results():
     """The whole point of compute_batch_logits's batch_size parameter is
-    memory-bounded chunking without changing behavior - verify a small
-    chunk size and one giant single-chunk call agree exactly."""
+    memory-bounded chunking without changing results MEANINGFULLY - checked
+    with np.allclose, not exact equality. CPU conv kernels can legitimately
+    select different internal algorithms depending on batch size, and
+    floating-point addition isn't associative, so different batch
+    compositions of the SAME inputs can produce tiny (~1e-6) numerical
+    differences with no bug involved. This was np.array_equal originally
+    and passed locally on this dev machine, then failed on a GitHub Actions
+    runner with a different CPU - a real example of asserting a stronger
+    guarantee than the framework (and the underlying hardware) actually
+    provides. allclose's tolerance is chosen to catch a REAL bug (e.g.
+    cross-batch contamination would produce differences many orders of
+    magnitude larger than float noise) while tolerating legitimate
+    batch-size-dependent kernel selection."""
     cfg = _tiny_config()
     model = PhaseSegmentationModel(cfg.model, cfg.data.feature_dim, NUM_CLASSES)
     model.eval()
@@ -132,13 +143,15 @@ def test_batch_chunking_does_not_change_results():
     logits_small_chunks = compute_batch_logits(model, cases, batch_size=3)
     logits_one_chunk = compute_batch_logits(model, cases, batch_size=100)
 
-    assert np.array_equal(logits_small_chunks, logits_one_chunk)
+    assert np.allclose(logits_small_chunks, logits_one_chunk, rtol=1e-4, atol=1e-5)
 
 
 def test_batched_and_sequential_single_case_inference_agree():
-    """A case processed inside a batch of many must produce the same
-    logits as when processed alone - i.e. no cross-contamination between
-    batch items (a classic real bug class for any batched inference path)."""
+    """A case processed inside a batch of many must produce (numerically,
+    not bit-exactly - see test_batch_chunking_does_not_change_results for
+    why) the same logits as when processed alone - i.e. no cross-
+    contamination between batch items (a classic real bug class for any
+    batched inference path)."""
     cfg = _tiny_config()
     model = PhaseSegmentationModel(cfg.model, cfg.data.feature_dim, NUM_CLASSES)
     model.eval()
@@ -149,7 +162,7 @@ def test_batched_and_sequential_single_case_inference_agree():
     batched = compute_batch_logits(model, cases, batch_size=100)
     for i, case in enumerate(cases):
         alone = compute_batch_logits(model, [case], batch_size=100)[0]
-        assert np.array_equal(batched[i], alone), f"case {i} differs when run alone vs. in a batch"
+        assert np.allclose(batched[i], alone, rtol=1e-4, atol=1e-5), f"case {i} differs when run alone vs. in a batch"
 
 
 def test_compute_batch_logits_handles_empty_case_list():

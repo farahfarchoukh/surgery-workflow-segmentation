@@ -72,6 +72,26 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Proximie OR Phase Segmentation - Local Serving Demo", lifespan=lifespan)
 
+MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024  # 10MB - generous for any realistic feature payload at this model's scale
+
+
+@app.middleware("http")
+async def limit_request_size(request: Request, call_next):
+    # Rejected on the Content-Length header alone, before the body is read
+    # or JSON-parsed: checking array shape AFTER building a numpy array
+    # from the payload (as the route handlers used to) means an oversized
+    # payload has already cost the memory/CPU to parse and convert by the
+    # time it's rejected. A missing/absent Content-Length (e.g. chunked
+    # transfer encoding) is let through to the route handler's own
+    # validation rather than guessed at here.
+    content_length = request.headers.get("content-length")
+    if content_length is not None and int(content_length) > MAX_REQUEST_BODY_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": f"request body {content_length} bytes exceeds the {MAX_REQUEST_BODY_BYTES}-byte limit"},
+        )
+    return await call_next(request)
+
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -188,8 +208,20 @@ def predict(req: RawPredictRequest) -> PredictionResponse:
     _require_model()
     cfg: ExperimentConfig = state["cfg"]
 
-    features_np = np.array(req.features, dtype=np.float32)
-    mask_np = np.array(req.camera_mask, dtype=np.float32)
+    try:
+        # A ragged nested list (inconsistent inner-list lengths - e.g. one
+        # camera with a different frame count than another) raises a numpy
+        # ValueError here. Left uncaught, that fell through to the global
+        # exception handler as a generic 500 - a client validation mistake
+        # deserves a clean 422 with a real explanation, not "internal error,
+        # see server logs" for something the server did nothing wrong to cause.
+        features_np = np.array(req.features, dtype=np.float32)
+        mask_np = np.array(req.camera_mask, dtype=np.float32)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=422,
+            detail=f"features/camera_mask must be regular (non-ragged) nested arrays: {e}",
+        ) from e
 
     if features_np.ndim != 3 or features_np.shape[-1] != cfg.data.feature_dim:
         raise HTTPException(

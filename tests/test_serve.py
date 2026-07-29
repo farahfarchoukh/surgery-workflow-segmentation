@@ -142,3 +142,41 @@ def test_predict_accepts_well_formed_raw_payload(trained_checkpoint):
         resp = client.post("/predict", json={"features": features, "camera_mask": mask})
         assert resp.status_code == 200
         assert resp.json()["num_frames"] == 20
+
+
+def test_predict_rejects_ragged_features_with_422_not_500(trained_checkpoint):
+    """A ragged nested list (inconsistent inner-list lengths) used to raise
+    an uncaught numpy ValueError, falling through to the global exception
+    handler as a generic 500 - a client validation mistake, not a server
+    fault, should surface as a clean 422 instead."""
+    import src.serve as serve_module
+
+    with TestClient(serve_module.app) as client:
+        ragged_features = [[[0.1] * 8 for _ in range(20)], [[0.1] * 8 for _ in range(15)]]  # camera 1 has fewer frames
+        resp = client.post("/predict", json={"features": ragged_features, "camera_mask": [[1.0] * 20, [1.0] * 20]})
+        assert resp.status_code == 422
+        assert "ragged" in resp.json()["detail"].lower() or "regular" in resp.json()["detail"].lower()
+
+
+def test_oversized_request_body_rejected_before_parsing(trained_checkpoint):
+    import src.serve as serve_module
+
+    with TestClient(serve_module.app) as client:
+        huge_body = "x" * (serve_module.MAX_REQUEST_BODY_BYTES + 1)
+        resp = client.post(
+            "/predict",
+            content=huge_body,
+            headers={"Content-Length": str(len(huge_body)), "Content-Type": "application/json"},
+        )
+        assert resp.status_code == 413
+
+
+def test_request_under_size_limit_is_not_rejected_by_size_check(trained_checkpoint):
+    """Confirms the size-limit middleware doesn't false-positive on a
+    normal, well-under-the-cap request - the oversized-body test alone
+    can't rule out the middleware rejecting everything."""
+    import src.serve as serve_module
+
+    with TestClient(serve_module.app) as client:
+        resp = client.post("/predict/synthetic", params={"seed": 1})
+        assert resp.status_code != 413
