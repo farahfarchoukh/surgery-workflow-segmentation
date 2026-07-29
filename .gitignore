@@ -1,8 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
-.venv-lock/
-.venv-relock/
+.venv-*/
 outputs/
 *.pt
 *.pdf

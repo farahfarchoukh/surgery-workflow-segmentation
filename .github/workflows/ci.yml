@@ -19,7 +19,10 @@ jobs:
       - name: Provision Python 3.12 + dependencies
         run: |
           uv venv --python 3.12
-          uv pip install -r requirements-dev.txt
+          # --index-strategy unsafe-best-match: requirements.txt's CVE-fix floors
+          # (e.g. idna>=3.7) only exist on PyPI, not on the PyTorch CPU wheel index
+          # requirements.txt also lists - see requirements.txt's own comment.
+          uv pip install --index-strategy unsafe-best-match -r requirements-dev.txt
 
       - name: Lint (ruff)
         run: .venv/bin/python -m ruff check .
@@ -62,11 +65,16 @@ jobs:
       - name: Provision Python 3.12 + exactly the locked runtime dependencies
         run: |
           uv venv --python 3.12
-          # --index-strategy unsafe-best-match: some pinned CVE-fix versions (e.g. idna>=3.7)
-          # only exist on PyPI, not on the PyTorch CPU wheel index also listed in
-          # requirements-lock.txt - same reasoning as the Dockerfile's install step, see
-          # its comment for why a single-index default would fail to resolve these.
-          uv pip install --index-strategy unsafe-best-match -r requirements-lock.txt
+          # requirements-lock.txt (uv pip freeze output) drops the --extra-index-url
+          # pragma requirements.txt carries, so torch==...+cpu must be passed
+          # explicitly here - identical reasoning to the Dockerfile's install step,
+          # see its comment. --index-strategy unsafe-best-match: some pinned
+          # CVE-fix versions (e.g. idna>=3.7) only exist on PyPI, not on that
+          # PyTorch CPU wheel index, so a single-index default would fail to
+          # resolve them even with the URL supplied.
+          uv pip install --index-strategy unsafe-best-match \
+            --extra-index-url https://download.pytorch.org/whl/cpu \
+            -r requirements-lock.txt
           uv pip install pip-audit
 
       - name: Audit the exact dependency set the Docker image ships
@@ -116,7 +124,9 @@ jobs:
       - name: Provision Python 3.12 + dependencies
         run: |
           uv venv --python 3.12
-          uv pip install -r requirements.txt
+          # --index-strategy unsafe-best-match: same reasoning as the test job's
+          # install step above - requirements.txt's CVE-fix floors need it.
+          uv pip install --index-strategy unsafe-best-match -r requirements.txt
 
       - name: Render diagram + build PDF
         run: |
