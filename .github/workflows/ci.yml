@@ -48,11 +48,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build image
-        run: docker build -t proximie-mle-challenge:ci .
+        run: docker build -t surgery-workflow-segmentation:ci .
 
       - name: Start container and check /health
         run: |
-          docker run -d --name smoke -p 8000:8000 proximie-mle-challenge:ci
+          docker run -d --name smoke -p 8000:8000 surgery-workflow-segmentation:ci
           # No checkpoint is baked into the image (outputs/ is gitignored/
           # dockerignored) or mounted here, so this deliberately exercises
           # the graceful-degradation path (Sec 4.4/README): /health must

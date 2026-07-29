@@ -35,10 +35,10 @@ serve:
 	$(PY) -m uvicorn src.serve:app --host 127.0.0.1 --port 8000
 
 docker-build:
-	docker build -t proximie-mle-challenge .
+	docker build -t surgery-workflow-segmentation .
 
 docker-run:
-	docker run --rm -it -p 8000:8000 proximie-mle-challenge
+	docker run --rm -it -p 8000:8000 surgery-workflow-segmentation
 
 clean:
 	rm -rf outputs .pytest_cache .ruff_cache

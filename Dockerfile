@@ -46,9 +46,9 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)" || exit 1
 
 # Default: start the serving API. Override for other pipeline stages, e.g.:
-#   docker run --rm proximie-mle-challenge python -m src.train
-#   docker run --rm proximie-mle-challenge python -m src.evaluate
-#   docker run --rm proximie-mle-challenge pytest -q
+#   docker run --rm surgery-workflow-segmentation python -m src.train
+#   docker run --rm surgery-workflow-segmentation python -m src.evaluate
+#   docker run --rm surgery-workflow-segmentation pytest -q
 # A trained checkpoint must exist at outputs/checkpoint.pt for the serving
 # command to have a model to load - mount it in (see README) or run
 # `python -m src.train` first inside the same container/volume.

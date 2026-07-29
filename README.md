@@ -138,7 +138,7 @@ matrix operation later.
 
 ```bash
 git clone <this repo>
-cd proximie-mle-challenge
+cd surgery-workflow-segmentation
 make bootstrap        # uv venv (Python 3.12) + pinned deps, no sudo
 make test              # 59 tests, ~9s
 make train              # ~30-35s CPU, writes outputs/checkpoint.pt
@@ -241,7 +241,7 @@ above), so a freshly-built container starts in the same graceful
 directory containing a trained checkpoint:
 
 ```bash
-docker run --rm -p 8000:8000 -v "$(pwd)/outputs:/app/outputs" proximie-mle-challenge
+docker run --rm -p 8000:8000 -v "$(pwd)/outputs:/app/outputs" surgery-workflow-segmentation
 ```
 
 **Verification caveat, stated plainly:** Docker Desktop was not running in

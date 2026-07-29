@@ -1,5 +1,5 @@
 [project]
-name = "proximie-mle-challenge"
+name = "surgery-workflow-segmentation"
 version = "0.1.0"
 description = "OR workflow phase segmentation prototype - Proximie Senior ML Engineer take-home"
 requires-python = ">=3.12"
